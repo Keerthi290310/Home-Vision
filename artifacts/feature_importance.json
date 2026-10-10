@@ -1,0 +1,102 @@
+{
+  "price": [
+    {
+      "feature": "square",
+      "importance": 103.2434371508969
+    },
+    {
+      "feature": "communityAverage",
+      "importance": 97.00872070233858
+    },
+    {
+      "feature": "trade_year",
+      "importance": 90.7439767716617
+    },
+    {
+      "feature": "trade_month",
+      "importance": 15.220984449052835
+    },
+    {
+      "feature": "Lng",
+      "importance": 1.1167851692212878
+    },
+    {
+      "feature": "Lat",
+      "importance": 1.0593933383967276
+    },
+    {
+      "feature": "followers",
+      "importance": 0.6867117054828817
+    },
+    {
+      "feature": "constructionTime",
+      "importance": 0.6658997587870594
+    },
+    {
+      "feature": "renovationCondition",
+      "importance": 0.6621150506133837
+    },
+    {
+      "feature": "ladderRatio",
+      "importance": 0.442573049342208
+    },
+    {
+      "feature": "drawingRoom",
+      "importance": 0.4137138399432274
+    },
+    {
+      "feature": "livingRoom",
+      "importance": 0.2968934918508701
+    }
+  ],
+  "dom": [
+    {
+      "feature": "followers",
+      "importance": 8.766511469006156
+    },
+    {
+      "feature": "trade_year",
+      "importance": 7.003692735897177
+    },
+    {
+      "feature": "trade_month",
+      "importance": 3.829871998800815
+    },
+    {
+      "feature": "square",
+      "importance": 1.6327786355764573
+    },
+    {
+      "feature": "communityAverage",
+      "importance": 0.7895826916646893
+    },
+    {
+      "feature": "livingRoom",
+      "importance": 0.6425339900701292
+    },
+    {
+      "feature": "Lat",
+      "importance": 0.3469110804393818
+    },
+    {
+      "feature": "renovationCondition",
+      "importance": 0.20491757893070428
+    },
+    {
+      "feature": "drawingRoom",
+      "importance": 0.12739723167900863
+    },
+    {
+      "feature": "district",
+      "importance": 0.11012154925591844
+    },
+    {
+      "feature": "Lng",
+      "importance": 0.04572366774363523
+    },
+    {
+      "feature": "bathRoom",
+      "importance": 0.038342905420190476
+    }
+  ]
+}

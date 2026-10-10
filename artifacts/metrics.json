@@ -1,0 +1,136 @@
+{
+  "dataset": {
+    "rows": 318851,
+    "columns": 26,
+    "price_usable_rows": 318851,
+    "dom_usable_rows": 160874,
+    "usable_rows": 318851,
+    "features": [
+      "Lng",
+      "Lat",
+      "followers",
+      "square",
+      "livingRoom",
+      "drawingRoom",
+      "kitchen",
+      "bathRoom",
+      "buildingType",
+      "constructionTime",
+      "renovationCondition",
+      "buildingStructure",
+      "ladderRatio",
+      "elevator",
+      "fiveYearsProperty",
+      "subway",
+      "district",
+      "communityAverage",
+      "floor_num",
+      "trade_year",
+      "trade_month",
+      "trade_quarter"
+    ]
+  },
+  "target_splits": {
+    "totalPrice": {
+      "usable_rows": 318851,
+      "train_rows": 207252,
+      "validation_rows": 47828,
+      "test_rows": 63771
+    },
+    "DOM": {
+      "usable_rows": 160874,
+      "train_rows": 104567,
+      "validation_rows": 24132,
+      "test_rows": 32175
+    }
+  },
+  "price_model": {
+    "name": "HistGradientBoosting",
+    "metrics": {
+      "MAE": 32.18380996320052,
+      "RMSE": 65.37592814160611,
+      "R2": 0.9203950517932424,
+      "validation_RMSE": 56.29487189718592,
+      "evaluation_rows": 63771
+    }
+  },
+  "dom_model": {
+    "name": "HistGradientBoosting",
+    "metrics": {
+      "MAE": 18.151951480992075,
+      "RMSE": 37.438490125399404,
+      "R2": 0.4560970092998611,
+      "validation_RMSE": 36.43363391663096,
+      "evaluation_rows": 32175
+    }
+  },
+  "benchmark": [
+    {
+      "model": "BaselineMedian",
+      "target": "totalPrice",
+      "MAE": 148.65155,
+      "RMSE": 231.2795607333255,
+      "R2": -0.059548747243007405,
+      "evaluation_rows": 10000,
+      "training_rows": 30000,
+      "evaluation_split": "validation sample",
+      "training_seconds": 0.08
+    },
+    {
+      "model": "HistGradientBoosting",
+      "target": "totalPrice",
+      "MAE": 33.05582625462645,
+      "RMSE": 56.536699297079664,
+      "R2": 0.9366848944972657,
+      "evaluation_rows": 10000,
+      "training_rows": 30000,
+      "evaluation_split": "validation sample",
+      "training_seconds": 0.45
+    },
+    {
+      "model": "BaselineMedian",
+      "target": "DOM",
+      "MAE": 27.2651,
+      "RMSE": 53.330725665417305,
+      "R2": -0.19684243602849638,
+      "evaluation_rows": 10000,
+      "training_rows": 30000,
+      "evaluation_split": "validation sample",
+      "training_seconds": 0.07
+    },
+    {
+      "model": "HistGradientBoosting",
+      "target": "DOM",
+      "MAE": 18.619360248676568,
+      "RMSE": 35.7729031504891,
+      "R2": 0.46149422301050314,
+      "evaluation_rows": 10000,
+      "training_rows": 30000,
+      "evaluation_split": "validation sample",
+      "training_seconds": 0.44
+    }
+  ],
+  "selection_rule": "lowest validation RMSE among candidate models; final metrics are measured on a separate held-out test split",
+  "split": {
+    "test_size": 0.2,
+    "validation_size_of_remaining": 0.1875,
+    "random_state": 42
+  },
+  "targets": {
+    "price": "totalPrice",
+    "dom": "DOM"
+  },
+  "dom_target_distribution": {
+    "valid_rows": 160874,
+    "one_day_rows": 69162,
+    "one_day_share": 0.4299140942601042,
+    "median_days": 6.0,
+    "p90_days": 87.0
+  },
+  "notes": [
+    "Price and DOM models use independent valid target records.",
+    "Benchmark rows use the same sampled validation records within each target.",
+    "DOM is strongly skewed; interpret its estimates as approximate.",
+    "R\u00b2 is a fit statistic, not a percentage accuracy guarantee."
+  ]
+}

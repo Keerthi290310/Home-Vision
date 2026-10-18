@@ -25,7 +25,7 @@ def load_or_rebuild_models():
 
 price_model, dom_model = load_or_rebuild_models()
 metrics=json.load(open(os.path.join(ART,'metrics.json'))); importance=json.load(open(os.path.join(ART,'feature_importance.json'))); schema=json.load(open(os.path.join(ART,'feature_schema.json')))
-raw=pd.read_csv(DATA,encoding='latin1',low_memory=False)
+raw=pd.read_csv(DATA,encoding='latin1',low_memory=True)
 def transform(d):
  return transform_features(d)
 

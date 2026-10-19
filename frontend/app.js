@@ -11,10 +11,10 @@ const fields = {
   Lng: { label: 'Longitude', help: 'East–west map coordinate.', group: 'Location & neighbourhood', min: 70, max: 140, step: 0.000001 },
   Lat: { label: 'Latitude', help: 'North–south map coordinate.', group: 'Location & neighbourhood', min: 15, max: 55, step: 0.000001 },
   district: { label: 'District code', help: 'Numeric district identifier from the dataset.', group: 'Location & neighbourhood', type: 'code', min: 1, max: 13, options: [1,2,3,4,5,6,7,8,9,10,11,12,13] },
-  communityAverage: { label: 'Community average unit price', help: 'Historical average price in CNY per m².', group: 'Location & neighbourhood', min: 0, max: 1000000, step: 100 },
+  communityAverage: { label: 'Community average unit price', help: 'Historical average price in CNY per m².', group: 'Location & neighbourhood', min: 0, max: 1000000, step: 'any' },
   subway: { label: 'Subway access', help: 'Does the record indicate subway access?', group: 'Location & neighbourhood', type: 'binary' },
 
-  square: { label: 'Living area (m²)', help: 'Indoor floor area in square metres.', group: 'Home & building', min: 10, max: 1000, step: 0.1 },
+  square: { label: 'Living area (m²)', help: 'Indoor floor area in square metres.', group: 'Home & building', min: 10, max: 1000, step: 'any' },
   livingRoom: { label: 'Living rooms', help: 'Number of living rooms.', group: 'Home & building', min: 0, max: 20, step: 1 },
   drawingRoom: { label: 'Drawing rooms', help: 'Number of drawing rooms.', group: 'Home & building', min: 0, max: 20, step: 1 },
   kitchen: { label: 'Kitchens', help: 'Number of kitchens.', group: 'Home & building', min: 0, max: 10, step: 1 },
@@ -132,7 +132,6 @@ function escapeHtml(value) {
     "'": '&#39;'
   }[char]));
 }
-
 function fieldMarkup(key) {
   const field = fields[key];
   const value = defaults[key] ?? '';
@@ -192,14 +191,12 @@ function buildForm() {
   </div>`;
 
   document.getElementById('formFields').innerHTML = html;
-
   document.getElementById('inputCount').textContent =
     `${keys.length} model inputs · grouped by purpose`;
-
   document.getElementById('formBadge').textContent =
     apiOnline ? 'MODEL CONNECTED' : 'API OFFLINE';
 
-  // One delegated listener handles changes to every input.
+  // Automatically update prediction when an input changes.
   form.addEventListener('input', event => {
     if (event.target.matches('#formFields input, #formFields select')) {
       schedulePrediction(700);
@@ -233,18 +230,26 @@ function buildForm() {
 
 function schedulePrediction(delay = 500) {
   clearTimeout(predictionTimer);
-
-  predictionTimer = setTimeout(() => {
-    runPrediction(false);
-  }, delay);
+  predictionTimer = setTimeout(() => runPrediction(false), delay);
 }
 
+function setMessage(message, type) {
+  const element = document.getElementById('formMessage');
+  if (element) {
+    element.className = `form-message ${type || ''}`;
+    element.textContent = message;
+  }
+}
+
+function decisionTitle(days) {
+  if (days < 30) return 'Shorter estimated market duration';
+  if (days < 90) return 'Mid-range estimated market duration';
+  return 'Longer estimated market duration';
+}
 async function runPrediction(manual = false) {
   const form = document.getElementById('form');
   if (!form) return;
 
-  // Invalidate previous requests immediately, including when the
-  // latest input is temporarily invalid while the user is typing.
   const requestId = ++predictionRequestId;
 
   if (!apiOnline) {
@@ -252,16 +257,16 @@ async function runPrediction(manual = false) {
     return;
   }
 
-  // A temporarily empty number field should not send bad data.
-  // The next valid input event automatically tries again.
   if (!form.checkValidity()) {
-    setMessage('Enter a valid value. Other inputs will keep their current values.', 'info');
+    setMessage(
+      'Enter a valid value. Other inputs will keep their current values.',
+      'info'
+    );
     return;
   }
 
   const values = {};
 
-  // Always send every field, not just the field that changed.
   for (const key of Object.keys(fields)) {
     const element = form.elements.namedItem(key);
     const rawValue = element?.value;
@@ -300,8 +305,9 @@ async function runPrediction(manual = false) {
     values[key] = number;
   }
 
-  // Keep the quarter consistent with the selected month.
+  // Keep trade quarter consistent with trade month.
   const correctQuarter = Math.ceil(values.trade_month / 3);
+
   if (values.trade_quarter !== correctQuarter) {
     values.trade_quarter = correctQuarter;
     const quarterInput = form.elements.namedItem('trade_quarter');
@@ -309,6 +315,7 @@ async function runPrediction(manual = false) {
   }
 
   const button = document.getElementById('predictBtn');
+
   if (button) {
     button.disabled = true;
     button.textContent = 'Calculating price and days…';
@@ -333,7 +340,7 @@ async function runPrediction(manual = false) {
       );
     }
 
-    // Ignore responses for older input states.
+    // Ignore stale responses from older inputs.
     if (requestId !== predictionRequestId) return;
 
     const price = Number(result.predicted_price);
@@ -350,23 +357,32 @@ async function runPrediction(manual = false) {
     const daysElement = document.getElementById('dom');
 
     if (priceElement) priceElement.textContent = priceUnits(price);
+
     if (convertedElement) {
-      convertedElement.textContent = `Approximate equivalent: ${money(price)} CNY`;
+      convertedElement.textContent =
+        `Approximate equivalent: ${money(price)} CNY`;
     }
+
     if (daysElement) {
-      daysElement.textContent = `${Math.round(days).toLocaleString()} days`;
+      daysElement.textContent =
+        `${Math.round(days).toLocaleString()} days`;
     }
 
     const interpretation = document.getElementById('interpret');
+
     if (interpretation) {
       interpretation.textContent =
         `For the current input profile, the estimated sale price is ${money(price)} CNY and estimated time on market is ${Math.round(days)} days.`;
     }
 
     const decision = document.getElementById('decisionTitle');
-    if (decision) decision.textContent = decisionTitle(days);
+
+    if (decision) {
+      decision.textContent = decisionTitle(days);
+    }
 
     const nextStep = document.getElementById('resultNextStep');
+
     if (nextStep) {
       nextStep.textContent = days < 30
         ? 'The model predicts a shorter time-on-market estimate. Compare other scenarios before drawing conclusions.'
@@ -376,6 +392,7 @@ async function runPrediction(manual = false) {
     }
 
     const disclaimer = document.getElementById('predictionDisclaimer');
+
     if (disclaimer) {
       disclaimer.textContent =
         'The model uses historical Beijing records and may be inaccurate for other locations, time periods, or properties unlike the training data.';
@@ -398,349 +415,253 @@ async function runPrediction(manual = false) {
       console.error('HomeVision prediction error:', error);
     }
   } finally {
-    // Only the newest request may change the button state.
     if (requestId === predictionRequestId && button) {
       button.disabled = false;
       button.innerHTML = 'Estimate price + time <span>→</span>';
     }
   }
 }
-
-function setMessage(message, type) {
-  const element = document.getElementById('formMessage');
-  if (element) {
-    element.className = `form-message ${type || ''}`;
-    element.textContent = message;
-  }
-}
-
-function decisionTitle(days) {
-  if (days < 30) return 'Shorter estimated market duration';
-  if (days < 90) return 'Mid-range estimated market duration';
-  return 'Longer estimated market duration';
-}
-
 async function init() {
+  const form = document.getElementById('form');
+
   try {
-    await get('/health');
+    const response = await fetch(api + '/health');
+    if (!response.ok) throw new Error('API unavailable');
+
     apiOnline = true;
-
-    const status = document.getElementById('status');
-    if (status) status.textContent = 'API connected';
-
-    const dot = document.getElementById('statusDot');
-    if (dot) dot.style.background = '#21c5a7';
-
-    const sideBottom = document.querySelector('.side-bottom');
-    if (sideBottom) {
-      sideBottom.querySelector('b').textContent = 'ML engine online';
-      sideBottom.querySelector('small').textContent = 'Price + market-time models ready';
-    }
-
-    defaults = await get('/defaults');
-
-    // Render the form only after the sample defaults are loaded.
-    buildForm();
-
-    const area = Number(defaults.square || 73.74);
-    const renovation = Number(defaults.renovationCondition || 3);
-    const floor = Number(defaults.floor_num || 11);
-
-    const setValue = (id, value) => {
-      const element = document.getElementById(id);
-      if (element) element.value = value;
-    };
-
-    setValue('a_square', area);
-    setValue('a_renov', renovation);
-    setValue('a_floor', floor);
-    setValue('b_square', area + 20);
-    setValue('b_renov', renovation === 4 ? 3 : 4);
-    setValue('b_floor', floor);
-
-    const [metrics, importance, summary] = await Promise.all([
-      get('/metrics'),
-      get('/importance'),
-      get('/summary')
-    ]);
-
-    renderMetrics(metrics);
-    renderImportance(importance);
-
-    document.getElementById('rowsKpi').textContent =
-      Number(summary.rows).toLocaleString();
-
-    document.getElementById('featuresKpi').textContent =
-      summary.features.length;
-
-    document.getElementById('priceR2').textContent =
-      Number(metrics.price_model.metrics.R2).toFixed(3);
-
-    document.getElementById('domR2').textContent =
-      Number(metrics.dom_model.metrics.R2).toFixed(3);
-
-    document.getElementById('formBadge').textContent =
-      `${Object.keys(fields).length} INPUTS READY`;
-
-    // Initial prediction using all sample defaults.
-    schedulePrediction(0);
+    setMessage('Backend connected. Enter property details to get predictions.', 'success');
   } catch (error) {
     apiOnline = false;
+    setMessage(
+      'Backend is offline. Start FastAPI on port 8000 and refresh this page.',
+      'error'
+    );
+  }
 
-    const status = document.getElementById('status');
-    if (status) status.textContent = 'API unavailable — start backend';
+  // Load backend defaults without overwriting existing user inputs.
+  try {
+    const response = await fetch(api + '/defaults');
 
-    const dot = document.getElementById('statusDot');
-    if (dot) dot.style.background = '#ef4444';
+    if (response.ok) {
+      const result = await response.json();
+      defaults = result.defaults || result;
 
-    const sideBottom = document.querySelector('.side-bottom');
-    if (sideBottom) {
-      sideBottom.querySelector('b').textContent = 'ML engine offline';
-      sideBottom.querySelector('small').textContent = 'Run run_homevision.bat';
+      if (form) {
+        for (const key of Object.keys(fields)) {
+          const input = form.elements.namedItem(key);
+
+          if (
+            input &&
+            (input.value === '' || input.value == null) &&
+            defaults[key] !== undefined
+          ) {
+            input.value = defaults[key];
+          }
+        }
+      }
     }
+  } catch (error) {
+    console.warn('Could not load defaults:', error);
+  }
 
-    const badge = document.getElementById('formBadge');
-    if (badge) badge.textContent = 'API OFFLINE';
+  // Keep the quarter synchronized with the selected month.
+  const monthInput = form?.elements.namedItem('trade_month');
+  const quarterInput = form?.elements.namedItem('trade_quarter');
 
-    const formFields = document.getElementById('formFields');
-    if (formFields) {
-      formFields.innerHTML =
-        '<div class="empty-state"><h3>Connect HomeVision to load inputs</h3><p>Start the backend, then refresh this page.</p></div>';
+  if (monthInput && quarterInput) {
+    monthInput.addEventListener('change', () => {
+      const month = Number(monthInput.value);
+
+      if (month >= 1 && month <= 12) {
+        quarterInput.value = String(Math.ceil(month / 3));
+      }
+    });
+  }
+
+  // Run an initial prediction when the form is valid.
+  if (form && apiOnline && form.checkValidity()) {
+    schedulePrediction();
+  }
+
+  await renderMetrics();
+  await renderImportance();
+  await loadFactorAnalysis();
+  await loadPreprocessingReport();
+}
+
+async function renderMetrics() {
+  try {
+    const response = await fetch(api + '/metrics');
+    if (!response.ok) return;
+
+    const data = await response.json();
+
+    const mapping = {
+      modelName: data.model_name,
+      modelScore: data.r2,
+      modelMAE: data.mae,
+      modelRMSE: data.rmse
+    };
+
+    for (const [id, value] of Object.entries(mapping)) {
+      const element = document.getElementById(id);
+
+      if (element && value !== undefined && value !== null) {
+        element.textContent =
+          typeof value === 'number'
+            ? value.toLocaleString(undefined, {
+                maximumFractionDigits: 4
+              })
+            : String(value);
+      }
     }
-
-    console.error('HomeVision initialization failed:', error);
+  } catch (error) {
+    console.warn('Metrics could not be loaded:', error);
   }
 }
 
-function renderMetrics(metrics) {
-  const price = metrics.price_model.metrics;
-  const dom = metrics.dom_model.metrics;
+async function renderImportance() {
+  try {
+    const response = await fetch(api + '/feature-importance');
+    if (!response.ok) return;
 
-  const items = [
-    ['PRICE · MAE', price.MAE, 'Average absolute error in 10,000 CNY units'],
-    ['PRICE · RMSE', price.RMSE, 'Root-mean-square error in 10,000 CNY units'],
-    ['PRICE · R²', price.R2, 'Fit score; closer to 1 is generally stronger'],
-    ['DOM · MAE', dom.MAE, 'Average absolute error in days'],
-    ['DOM · RMSE', dom.RMSE, 'Root-mean-square error in days'],
-    ['DOM · R²', dom.R2, 'Fit score; closer to 1 is generally stronger']
-  ];
+    const result = await response.json();
+    const container = document.getElementById('importance');
 
-  document.getElementById('metrics').innerHTML = items.map(item =>
-    `<div class="metric" title="${escapeHtml(item[2])}">
-      <small>${item[0]}</small>
-      <strong>${Number(item[1]).toFixed(3)}</strong>
-      <span>${escapeHtml(item[2])}</span>
-    </div>`
-  ).join('');
+    if (!container) return;
 
-  document.getElementById('bench').innerHTML =
-    `<div class="table-scroll"><table>
-      <tr><th>Candidate model</th><th>Target</th><th>MAE</th><th>RMSE</th><th>R²</th></tr>
-      ${metrics.benchmark.map(item => `<tr>
-        <td><b>${escapeHtml(item.model)}</b></td>
-        <td>${escapeHtml(item.target)}</td>
-        <td>${Number(item.MAE).toFixed(2)}</td>
-        <td>${Number(item.RMSE).toFixed(2)}</td>
-        <td>${Number(item.R2).toFixed(3)}</td>
-      </tr>`).join('')}
-    </table></div>`;
-}
+    const items = result.importance || result.features || [];
 
-function renderImportance(importance) {
-  for (const [id, key] of [['priceImp', 'price'], ['domImp', 'dom']]) {
-    const array = importance[key] || [];
-    const max = Math.max(...array.map(item => Math.abs(item.importance))) || 1;
+    if (!Array.isArray(items) || items.length === 0) {
+      container.textContent = 'Feature importance is not available.';
+      return;
+    }
 
-    document.getElementById(id).innerHTML =
-      array.slice(0, 10).map(item => `<div class="bar">
-        <b>${escapeHtml(fields[item.feature]?.label || item.feature)}</b>
-        <div class="track" aria-label="Relative feature importance">
-          <div class="fill" style="width:${Math.min(100, Math.abs(item.importance) / max * 100)}%"></div>
+    container.innerHTML = items.map(item => {
+      const name = escapeHtml(
+        item.feature || item.name || item.key || 'Feature'
+      );
+
+      const value = Number(
+        item.importance ?? item.value ?? item.score ?? 0
+      );
+
+      const safeValue = Number.isFinite(value) ? value : 0;
+      const width = Math.max(0, Math.min(100, safeValue * 100));
+
+      return `
+        <div class="importance-row">
+          <div class="importance-label">
+            <span>${name}</span>
+            <span>${safeValue.toFixed(3)}</span>
+          </div>
+          <div class="importance-track">
+            <div class="importance-bar" style="width:${width}%"></div>
+          </div>
         </div>
-        <span>${Number(item.importance).toFixed(3)}</span>
-      </div>`).join('') ||
-      '<p>No feature-importance data is available.</p>';
+      `;
+    }).join('');
+  } catch (error) {
+    console.warn('Feature importance could not be loaded:', error);
   }
 }
 
 async function runWhatIf() {
-  if (!apiOnline) {
-    document.getElementById('scenarioOut').innerHTML =
-      '<p class="form-message error">HomeVision API is offline. Start the backend and refresh.</p>';
+  const form = document.getElementById('form');
+
+  if (!form) return;
+
+  if (!form.checkValidity()) {
+    form.reportValidity();
     return;
   }
 
-  const aArea = Number(document.getElementById('a_square').value);
-  const aRenov = Number(document.getElementById('a_renov').value);
-  const aFloor = Number(document.getElementById('a_floor').value);
-  const bArea = Number(document.getElementById('b_square').value);
-  const bRenov = Number(document.getElementById('b_renov').value);
-  const bFloor = Number(document.getElementById('b_floor').value);
+  const values = {};
 
-  if (
-    [aArea, aRenov, aFloor, bArea, bRenov, bFloor].some(n => !Number.isFinite(n)) ||
-    [aArea, bArea].some(n => n < 10 || n > 1000) ||
-    [aFloor, bFloor].some(n => n < 0 || n > 100) ||
-    [aRenov, bRenov].some(n => !Number.isInteger(n) || n < 1 || n > 4)
-  ) {
-    document.getElementById('scenarioOut').innerHTML =
-      '<p class="form-message error">Check values: area 10–1000 m², floor 0–100, renovation code 1–4.</p>';
-    return;
+  for (const key of Object.keys(fields)) {
+    const input = form.elements.namedItem(key);
+    if (!input) continue;
+
+    const number = Number(input.value);
+
+    if (!Number.isFinite(number)) {
+      setMessage(`Enter a valid value for ${fields[key].label}.`, 'error');
+      return;
+    }
+
+    values[key] = number;
   }
 
-  const common = { ...defaults };
+  const container = document.getElementById('whatIfResults');
 
-  const a = { ...common, square: aArea, renovationCondition: aRenov, floor_num: aFloor };
-  const b = { ...common, square: bArea, renovationCondition: bRenov, floor_num: bFloor };
+  if (container) {
+    container.textContent = 'Calculating scenarios…';
+  }
 
   try {
     const response = await fetch(api + '/what-if', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        scenarios: [
-          { name: 'Baseline', values: a },
-          { name: 'Alternative', values: b }
-        ]
-      })
+      body: JSON.stringify({ values })
     });
 
     const result = await response.json();
-    if (!response.ok) throw new Error(result.detail || 'Scenario failed');
 
-    const scenarios = result.scenarios;
+    if (!response.ok) {
+      throw new Error(
+        result.detail || 'Could not calculate scenarios.'
+      );
+    }
 
-    document.getElementById('scenarioOut').innerHTML =
-      `<div class="panel-title">
-        <div><span class="eyebrow">MODEL OUTPUTS</span><h3>Your side-by-side comparison</h3></div>
-      </div>
-      <div class="scenario-results-grid">
-        ${scenarios.map((scenario, index) => `<div class="scenario-result-card ${index ? 'alt' : ''}">
-          <span>${index ? 'B · ALTERNATIVE' : 'A · BASELINE'}</span>
-          <h4>${escapeHtml(scenario.name)}</h4>
-          <strong>${money(scenario.price)}</strong>
-          <small>Estimated sale price</small>
-          <b>${Math.round(scenario.dom).toLocaleString()} days</b>
-          <small>Estimated time on market</small>
-        </div>`).join('')}
-      </div>
-      <div class="scenario-delta">
-        <h4>Difference: Alternative minus Baseline</h4>
-        <p><b>${money(scenarios[1].price - scenarios[0].price)}</b> estimated price ·
-        <b>${(scenarios[1].dom - scenarios[0].dom >= 0 ? '+' : '') + Math.round(scenarios[1].dom - scenarios[0].dom)} days</b>
-        estimated market time</p>
-        <p>${escapeHtml(result.insight)}</p>
-      </div>
-      <p class="disclaimer">Only area, renovation code, and floor change in this comparison; other features stay at sample defaults. These are model associations, not causal effects.</p>`;
+    if (container) {
+      container.innerHTML = `
+        <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+      `;
+    }
   } catch (error) {
-    document.getElementById('scenarioOut').innerHTML =
-      `<p class="form-message error">Comparison failed: ${escapeHtml(error.message)}</p>`;
+    if (container) {
+      container.textContent = `Scenario calculation failed: ${error.message}`;
+    }
+
+    console.error('What-if error:', error);
   }
 }
 
-document.getElementById('runFactorAnalysis')
-  ?.addEventListener('click', loadFactorAnalysis);
-
-document.getElementById('runWhatIfButton')
-  ?.addEventListener('click', runWhatIf);
-
 async function loadFactorAnalysis() {
-  const output = document.getElementById('factorOut');
-  if (!output) return;
-
-  output.innerHTML =
-    '<p>Calculating factors from a reproducible sample of the historical dataset…</p>';
-
   try {
-    const result = await get('/factor-analysis');
+    const response = await fetch(api + '/factor-analysis');
+    if (!response.ok) return;
 
-    const factorHtml = result.factors.map(factor =>
-      `<div class="panel" style="margin:10px 0;padding:14px">
-        <h4>${escapeHtml(factor.name)}
-          <small>· ${Math.round(factor.variance_share * 1000) / 10}% of extracted factor-score variance</small>
-        </h4>
-        <div>
-          ${factor.top_loadings.map(item => `<div class="bar">
-            <b>${escapeHtml(fields[item.feature]?.label || item.feature)}</b>
-            <span>loading ${item.loading.toFixed(3)}</span>
-          </div>`).join('')}
-        </div>
-      </div>`
-    ).join('');
+    const result = await response.json();
+    const container = document.getElementById('factorAnalysis');
 
-    const correlations = result.strong_correlations.length
-      ? `<h4>Strong numeric correlations (|r| ≥ 0.45)</h4>
-         <div>${result.strong_correlations.map(item =>
-           `<p>${escapeHtml(fields[item.feature_a]?.label || item.feature_a)} ↔
-           ${escapeHtml(fields[item.feature_b]?.label || item.feature_b)}:
-           <b>${item.correlation.toFixed(2)}</b></p>`
-         ).join('')}</div>`
-      : '<p>No feature pairs crossed the selected correlation threshold in this sample.</p>';
+    if (!container) return;
 
-    output.innerHTML =
-      `<p><b>Method:</b> ${escapeHtml(result.method)} ·
-      <b>Sample:</b> ${result.sample_rows.toLocaleString()} records ·
-      <b>Numeric variables:</b> ${result.features.length}</p>
-      ${factorHtml}${correlations}
-      <p class="disclaimer">${escapeHtml(result.caveat)}</p>`;
+    container.innerHTML = `
+      <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+    `;
   } catch (error) {
-    output.innerHTML =
-      `<p class="form-message error">Factor analysis failed: ${escapeHtml(error.message)}</p>`;
+    console.warn('Factor analysis could not be loaded:', error);
   }
 }
 
 async function loadPreprocessingReport() {
-  const status = document.getElementById('preprocessStatus');
-  if (!status || status.dataset.loaded === 'yes') return;
-
-  status.innerHTML =
-    '<span class="scope-icon">i</span><div><strong>Loading report…</strong><p>Reading dataset statistics from the API.</p></div>';
-
   try {
-    const report = await get('/preprocessing-report');
+    const response = await fetch(api + '/preprocessing-report');
+    if (!response.ok) return;
 
-    document.getElementById('preprocessKpis').innerHTML =
-      [
-        ['SOURCE RECORDS', report.source_rows.toLocaleString()],
-        ['SOURCE COLUMNS', report.source_columns],
-        ['DUPLICATE ROWS', report.duplicate_rows.toLocaleString()],
-        ['MODEL INPUTS', report.model_features]
-      ].map(([label, value]) => `<div class="kpi">
-        <span>${label}</span><strong>${value}</strong>
-        <small>Computed from supplied data</small>
-      </div>`).join('');
+    const result = await response.json();
+    const container = document.getElementById('preprocessingReport');
 
-    document.getElementById('preprocessSteps').innerHTML =
-      report.steps.map((step, index) => `<div class="difference-card" style="margin:10px 0;padding:14px">
-        <span class="num">${String(index + 1).padStart(2, '0')}</span>
-        <div><h3>${escapeHtml(step.title)}</h3><p>${escapeHtml(step.detail)}</p></div>
-      </div>`).join('');
+    if (!container) return;
 
-    document.getElementById('preprocessTargets').innerHTML =
-      `<div class="bar"><b>Price target</b><span>${report.price_usable_rows.toLocaleString()} records</span></div>
-      <div class="bar"><b>DOM target</b><span>${report.dom_usable_rows.toLocaleString()} records</span></div>
-      <p class="disclaimer">Target counts differ because DOM can be missing even when price is valid.</p>
-      <p><b>Derived features:</b> ${report.engineered_features.map(escapeHtml).join(', ') || 'None detected'}</p>
-      <p><b>Removed fields:</b> ${report.removed_columns.map(escapeHtml).join(', ') || 'None detected'}</p>`;
-
-    document.getElementById('missingTable').innerHTML =
-      report.missing_values.length
-        ? `<table><thead><tr><th>Source column</th><th>Missing</th><th>Missing %</th></tr></thead>
-           <tbody>${report.missing_values.map(item => `<tr>
-             <td>${escapeHtml(item.column)}</td>
-             <td>${item.missing.toLocaleString()}</td>
-             <td>${item.percent}%</td>
-           </tr>`).join('')}</tbody></table>`
-        : '<p>No missing values found in source columns.</p>';
-
-    status.innerHTML =
-      '<span class="scope-icon">✓</span><div><strong>Report loaded from the included dataset</strong><p>Missing values and duplicate counts are computed from source data. Imputation and encoding are performed in the training pipeline.</p></div>';
-
-    status.dataset.loaded = 'yes';
+    container.innerHTML = `
+      <pre>${escapeHtml(JSON.stringify(result, null, 2))}</pre>
+    `;
   } catch (error) {
-    status.innerHTML =
-      `<span class="scope-icon">!</span><div><strong>Could not load report</strong><p>${escapeHtml(error.message)}. Check that the API is running.</p></div>`;
+    console.warn('Preprocessing report could not be loaded:', error);
   }
 }
 
+// Start the application.
 init();

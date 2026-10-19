@@ -1,3 +1,4 @@
+
 const api = (location.protocol === 'file:' || location.port === '5500')
   ? 'http://127.0.0.1:8000'
   : '';
@@ -132,6 +133,7 @@ function escapeHtml(value) {
     "'": '&#39;'
   }[char]));
 }
+
 function fieldMarkup(key) {
   const field = fields[key];
   const value = defaults[key] ?? '';
@@ -246,6 +248,7 @@ function decisionTitle(days) {
   if (days < 90) return 'Mid-range estimated market duration';
   return 'Longer estimated market duration';
 }
+
 async function runPrediction(manual = false) {
   const form = document.getElementById('form');
   if (!form) return;
@@ -421,6 +424,7 @@ async function runPrediction(manual = false) {
     }
   }
 }
+
 async function init() {
   const form = document.getElementById('form');
 
@@ -463,6 +467,9 @@ async function init() {
   } catch (error) {
     console.warn('Could not load defaults:', error);
   }
+
+  // CHANGE 1: Build the form after backend defaults have loaded.
+  buildForm();
 
   // Keep the quarter synchronized with the selected month.
   const monthInput = form?.elements.namedItem('trade_month');
@@ -663,5 +670,9 @@ async function loadPreprocessingReport() {
   }
 }
 
-// Start the application.
-init();
+// CHANGE 2: Start the application only after the DOM is ready.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init, { once: true });
+} else {
+  init();
+}

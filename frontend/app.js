@@ -236,7 +236,7 @@ function buildForm() {
       values[k] = n;
     }
 
-    // FIX: normalize month and quarter as numbers.
+    // Normalize month and quarter as numbers.
     const month = Number(values.trade_month);
     let quarter = Number(values.trade_quarter);
 
@@ -410,6 +410,13 @@ async function init() {
       Number(m.dom_model.metrics.R2).toFixed(3);
     document.getElementById('formBadge').textContent =
       `${s.features.length} INPUTS READY`;
+
+    // CHANGE: Run the first prediction automatically using sample defaults.
+    // The form submit handler has already been attached by buildForm().
+    const predictionForm = document.getElementById('form');
+    if (apiOnline && predictionForm) {
+      predictionForm.requestSubmit();
+    }
   } catch (e) {
     apiOnline = false;
 

@@ -162,7 +162,6 @@ function fieldMarkup(k) {
     <small class="sample-default">Sample default: ${escapeHtml(v)}</small>
   </label>`;
 }
-
 function buildForm() {
   const form = document.getElementById('form');
   const keys = Object.keys(fields);
@@ -202,8 +201,30 @@ function buildForm() {
     setMessage('Sample dataset values restored. Review them before predicting.', 'info');
   };
 
+  // Automatically rerun the prediction when the user changes any model input.
+  // Debounce prevents sending a request for every keystroke while typing.
+  let predictionTimer;
+  form.addEventListener('input', () => {
+    clearTimeout(predictionTimer);
+    predictionTimer = setTimeout(() => {
+      if (apiOnline && !form.querySelector(':invalid')) {
+        form.requestSubmit();
+      }
+    }, 800);
+  });
+
+  form.addEventListener('change', () => {
+    clearTimeout(predictionTimer);
+    predictionTimer = setTimeout(() => {
+      if (apiOnline && !form.querySelector(':invalid')) {
+        form.requestSubmit();
+      }
+    }, 300);
+  });
+
   form.onsubmit = async e => {
     e.preventDefault();
+    const isManualSubmit = Boolean(e.submitter);
 
     if (!apiOnline) {
       setMessage('The API is not connected. Start the backend and refresh this page.', 'error');
@@ -328,10 +349,14 @@ function buildForm() {
         'success'
       );
 
-      document.querySelector('.result-stack').scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      });
+      // Scroll to the results only when the user presses the button.
+      // Automatic predictions should not jump the page while editing fields.
+      if (isManualSubmit) {
+        document.querySelector('.result-stack').scrollIntoView({
+          behavior: 'smooth',
+          block: 'start'
+        });
+      }
     } catch (err) {
       setMessage(`Prediction could not be completed: ${err.message}`, 'error');
     } finally {
@@ -411,8 +436,8 @@ async function init() {
     document.getElementById('formBadge').textContent =
       `${s.features.length} INPUTS READY`;
 
-    // CHANGE: Run the first prediction automatically using sample defaults.
-    // The form submit handler has already been attached by buildForm().
+    // Run the first prediction automatically using the loaded sample defaults.
+    // buildForm() has already attached the form submit handler at this point.
     const predictionForm = document.getElementById('form');
     if (apiOnline && predictionForm) {
       predictionForm.requestSubmit();
@@ -438,7 +463,6 @@ async function init() {
     console.error('HomeVision API connection failed:', e);
   }
 }
-
 function renderMetrics(m) {
   const p = m.price_model.metrics;
   const d = m.dom_model.metrics;

@@ -2,7 +2,10 @@ const api = (location.protocol === 'file:' || location.port === '5500')
   ? 'http://127.0.0.1:8000'
   : '';
 
-let defaults = {}, apiOnline = false;
+let defaults = {};
+let apiOnline = false;
+let predictionTimer = null;
+let predictionRequestId = 0;
 
 const fields = {
   Lng: { label: 'Longitude', help: 'East–west map coordinate. Keep the supplied sample unless you know the coordinate.', group: 'Location & neighbourhood', min: 70, max: 140, step: 0.000001 },
@@ -49,7 +52,9 @@ const money = n =>
   `¥${Math.round(Number(n) * 10000).toLocaleString('en-US')}`;
 
 const priceUnits = n =>
-  `${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })} × 10,000 CNY`;
+  `${Number(n).toLocaleString(undefined, {
+    maximumFractionDigits: 2
+  })} × 10,000 CNY`;
 
 function showTab(id, options = {}) {
   const target = document.getElementById(id);
@@ -108,27 +113,31 @@ document.querySelectorAll('[data-open-tab]').forEach(button => {
   );
 });
 
-async function get(u) {
-  const r = await fetch(api + u);
-  if (!r.ok) {
-    throw new Error((await r.text()) || `Request failed (${r.status})`);
+async function get(url) {
+  const response = await fetch(api + url);
+
+  if (!response.ok) {
+    throw new Error(
+      (await response.text()) || `Request failed (${response.status})`
+    );
   }
-  return r.json();
+
+  return response.json();
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, c => ({
+function escapeHtml(value) {
+  return String(value).replace(/[&<>"']/g, char => ({
     '&': '&amp;',
     '<': '&lt;',
     '>': '&gt;',
     '"': '&quot;',
     "'": '&#39;'
-  }[c]));
+  }[char]));
 }
 
-function fieldMarkup(k) {
-  const f = fields[k] || {
-    label: k,
+function fieldMarkup(key) {
+  const field = fields[key] || {
+    label: key,
     help: 'Feature used by the model.',
     group: 'Other inputs',
     min: 0,
@@ -136,32 +145,37 @@ function fieldMarkup(k) {
     step: 'any'
   };
 
-  const v = defaults[k] ?? '';
-  const id = `field-${k}`;
+  const value = defaults[key] ?? '';
+  const id = `field-${key}`;
   let input = '';
 
-  if (f.type === 'binary') {
-    input = `<select id="${id}" name="${k}" required>
-      <option value="0" ${Number(v) === 0 ? 'selected' : ''}>No · 0</option>
-      <option value="1" ${Number(v) === 1 ? 'selected' : ''}>Yes · 1</option>
+  if (field.type === 'binary') {
+    input = `<select id="${id}" name="${key}" required>
+      <option value="0" ${Number(value) === 0 ? 'selected' : ''}>No · 0</option>
+      <option value="1" ${Number(value) === 1 ? 'selected' : ''}>Yes · 1</option>
     </select>`;
-  } else if (f.type === 'code') {
-    input = `<select id="${id}" name="${k}" required>
-      ${f.options.map(n => `<option value="${n}" ${Number(v) === n ? 'selected' : ''}>Code ${n}${Number(v) === n ? ' · sample default' : ''}</option>`).join('')}
+  } else if (field.type === 'code') {
+    input = `<select id="${id}" name="${key}" required>
+      ${field.options.map(number => `
+        <option value="${number}" ${Number(value) === number ? 'selected' : ''}>
+          Code ${number}${Number(value) === number ? ' · sample default' : ''}
+        </option>
+      `).join('')}
     </select>`;
   } else {
-    input = `<input id="${id}" name="${k}" type="number"
-      min="${f.min}" max="${f.max}" step="${f.step}"
-      value="${escapeHtml(v)}" required inputmode="decimal">`;
+    input = `<input id="${id}" name="${key}" type="number"
+      min="${field.min}" max="${field.max}" step="${field.step}"
+      value="${escapeHtml(value)}" required inputmode="decimal">`;
   }
 
   return `<label class="field-card" for="${id}">
-    <span class="field-name">${escapeHtml(f.label)}</span>
+    <span class="field-name">${escapeHtml(field.label)}</span>
     ${input}
-    <small class="field-help">${escapeHtml(f.help)}</small>
-    <small class="sample-default">Sample default: ${escapeHtml(v)}</small>
+    <small class="field-help">${escapeHtml(field.help)}</small>
+    <small class="sample-default">Sample default: ${escapeHtml(value)}</small>
   </label>`;
 }
+
 function buildForm() {
   const form = document.getElementById('form');
   const keys = Object.keys(fields);
@@ -172,7 +186,7 @@ function buildForm() {
   </div>`;
 
   for (const group of groups) {
-    const groupKeys = keys.filter(k => fields[k].group === group);
+    const groupKeys = keys.filter(key => fields[key].group === group);
 
     html += `<div class="field-group-heading">
       <span>${groups.indexOf(group) + 1}</span>
@@ -188,202 +202,251 @@ function buildForm() {
   </div>`;
 
   document.getElementById('formFields').innerHTML = html;
+
   document.getElementById('inputCount').textContent =
     `${keys.length} model inputs · grouped by purpose`;
+
   document.getElementById('formBadge').textContent =
     apiOnline ? 'MODEL CONNECTED' : 'API OFFLINE';
 
-  document.getElementById('resetDefaults').onclick = () => {
-    for (const [k, v] of Object.entries(defaults)) {
-      const el = form.elements.namedItem(k);
-      if (el) el.value = v;
-    }
-    setMessage('Sample dataset values restored. Review them before predicting.', 'info');
-  };
-
-  // Automatically rerun the prediction when the user changes any model input.
-  // Debounce prevents sending a request for every keystroke while typing.
-  let predictionTimer;
+  /*
+   * Core behaviour:
+   * Whenever any input changes, collect all 22 current values
+   * and send them to the prediction API.
+   */
   form.addEventListener('input', () => {
-    clearTimeout(predictionTimer);
-    predictionTimer = setTimeout(() => {
-      if (apiOnline && !form.querySelector(':invalid')) {
-        form.requestSubmit();
-      }
-    }, 800);
+    schedulePrediction(700);
   });
 
   form.addEventListener('change', () => {
-    clearTimeout(predictionTimer);
-    predictionTimer = setTimeout(() => {
-      if (apiOnline && !form.querySelector(':invalid')) {
-        form.requestSubmit();
-      }
-    }, 300);
+    schedulePrediction(250);
   });
 
-  form.onsubmit = async e => {
-    e.preventDefault();
-    const isManualSubmit = Boolean(e.submitter);
+  form.addEventListener('submit', async event => {
+    event.preventDefault();
 
-    if (!apiOnline) {
-      setMessage('The API is not connected. Start the backend and refresh this page.', 'error');
-      return;
+    clearTimeout(predictionTimer);
+
+    await runPrediction(true);
+  });
+
+  document.getElementById('resetDefaults').onclick = () => {
+    for (const [key, value] of Object.entries(defaults)) {
+      const element = form.elements.namedItem(key);
+      if (element) element.value = value;
     }
 
-    const values = {};
+    setMessage('Sample defaults restored. Updating predictions…', 'info');
 
-    for (const [k, v] of new FormData(form).entries()) {
-      const n = Number(v);
-      const f = fields[k];
-
-      if (!Number.isFinite(n)) {
-        setMessage(`Enter a valid number for ${f?.label || k}.`, 'error');
-        return;
-      }
-
-      if (f && (n < f.min || n > f.max)) {
-        setMessage(`${f.label} must be between ${f.min} and ${f.max}.`, 'error');
-        form.elements.namedItem(k).focus();
-        return;
-      }
-
-      if (f && Number(f.step) === 1 && !Number.isInteger(n)) {
-        setMessage(`${f.label} must be a whole number.`, 'error');
-        form.elements.namedItem(k).focus();
-        return;
-      }
-
-      values[k] = n;
-    }
-
-    // Normalize month and quarter as numbers.
-    const month = Number(values.trade_month);
-    let quarter = Number(values.trade_quarter);
-
-    if (!Number.isInteger(month) || month < 1 || month > 12) {
-      setMessage('Trade month must be a whole number from 1 to 12.', 'error');
-      return;
-    }
-
-    // January–March = Q1, April–June = Q2,
-    // July–September = Q3, October–December = Q4.
-    const correctQuarter = Math.ceil(month / 3);
-
-    // Automatically synchronize the quarter with the month.
-    if (quarter !== correctQuarter) {
-      quarter = correctQuarter;
-      values.trade_quarter = correctQuarter;
-
-      const quarterInput = form.elements.namedItem('trade_quarter');
-      if (quarterInput) {
-        quarterInput.value = String(correctQuarter);
-      }
-
-      setMessage(
-        `Trade quarter corrected to Q${correctQuarter} for month ${month}.`,
-        'info'
-      );
-    }
-
-    // Final validation before sending the request.
-    if (values.trade_quarter !== Math.ceil(values.trade_month / 3)) {
-      setMessage('Please check the trade month and quarter.', 'error');
-      return;
-    }
-
-    console.log('HomeVision prediction input:', values);
-
-    const btn = document.getElementById('predictBtn');
-    btn.disabled = true;
-    btn.textContent = 'Calculating both estimates…';
-
-    setMessage(
-      'Running the price and days-on-market models with your inputs…',
-      'info'
-    );
-
-    try {
-      const r = await fetch(api + '/predict', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ values })
-      });
-
-      const x = await r.json();
-
-      if (!r.ok) {
-        throw new Error(
-          typeof x.detail === 'string'
-            ? x.detail
-            : JSON.stringify(x.detail || 'Prediction failed')
-        );
-      }
-
-      const p = Number(x.predicted_price);
-      const d = Number(x.predicted_dom_days);
-
-      document.getElementById('price').textContent = priceUnits(p);
-      document.getElementById('priceConverted').textContent =
-        `Approximate equivalent: ${money(p)} CNY`;
-      document.getElementById('dom').textContent =
-        `${Math.round(d).toLocaleString()} days`;
-
-      document.getElementById('interpret').textContent =
-        `The model estimates ${money(p)} CNY for the recorded price and about ${Math.round(d)} days on market for this input profile.`;
-
-      document.getElementById('decisionTitle').textContent = decisionTitle(d);
-
-      document.getElementById('resultNextStep').textContent =
-        d < 30
-          ? 'The model predicts a shorter time-on-market estimate for this profile. Compare scenarios before drawing conclusions.'
-          : d < 90
-            ? 'The model predicts a mid-range time-on-market estimate for this profile. Use Scenario Lab to test changes.'
-            : 'The model predicts a longer time-on-market estimate for this profile. Check the input values and compare scenarios.';
-
-      document.getElementById('predictionDisclaimer').textContent =
-        'Important: the model uses historical Beijing records and may be inaccurate for different locations, time periods, or properties unlike the training data.';
-
-      setMessage(
-        'Prediction completed. Review price and time together; neither is a guarantee.',
-        'success'
-      );
-
-      // Scroll to the results only when the user presses the button.
-      // Automatic predictions should not jump the page while editing fields.
-      if (isManualSubmit) {
-        document.querySelector('.result-stack').scrollIntoView({
-          behavior: 'smooth',
-          block: 'start'
-        });
-      }
-    } catch (err) {
-      setMessage(`Prediction could not be completed: ${err.message}`, 'error');
-    } finally {
-      btn.disabled = false;
-      btn.innerHTML = 'Estimate price + time <span>→</span>';
-    }
+    schedulePrediction(0);
   };
 }
 
-function setMessage(msg, type) {
-  const el = document.getElementById('formMessage');
-  if (el) {
-    el.className = `form-message ${type || ''}`;
-    el.textContent = msg;
+/*
+ * Debounce automatic predictions so typing a number does not
+ * send a request after every keystroke.
+ */
+function schedulePrediction(delay = 500) {
+  clearTimeout(predictionTimer);
+
+  predictionTimer = setTimeout(() => {
+    runPrediction(false);
+  }, delay);
+}
+
+async function runPrediction(manual = false) {
+  const form = document.getElementById('form');
+
+  if (!form || !apiOnline) {
+    setMessage(
+      'The API is not connected. Start the backend and refresh this page.',
+      'error'
+    );
+    return;
+  }
+
+  // Do not predict while a field contains an invalid or incomplete value.
+  if (!form.checkValidity()) {
+    setMessage(
+      'Finish entering a valid value. All other inputs can remain unchanged.',
+      'info'
+    );
+    return;
+  }
+
+  const values = {};
+
+  /*
+   * IMPORTANT:
+   * Read all model fields, not just the field the user changed.
+   * This preserves every other current/default value.
+   */
+  for (const key of Object.keys(fields)) {
+    const element = form.elements.namedItem(key);
+    const number = Number(element?.value);
+    const field = fields[key];
+
+    if (!Number.isFinite(number)) {
+      setMessage(`Enter a valid number for ${field.label}.`, 'error');
+      return;
+    }
+
+    if (number < field.min || number > field.max) {
+      setMessage(
+        `${field.label} must be between ${field.min} and ${field.max}.`,
+        'error'
+      );
+      element.focus();
+      return;
+    }
+
+    if (Number(field.step) === 1 && !Number.isInteger(number)) {
+      setMessage(`${field.label} must be a whole number.`, 'error');
+      element.focus();
+      return;
+    }
+
+    values[key] = number;
+  }
+
+  // Keep month and quarter consistent.
+  const month = values.trade_month;
+  const correctQuarter = Math.ceil(month / 3);
+
+  if (values.trade_quarter !== correctQuarter) {
+    values.trade_quarter = correctQuarter;
+
+    const quarterInput = form.elements.namedItem('trade_quarter');
+    if (quarterInput) quarterInput.value = String(correctQuarter);
+  }
+
+  // Give every request a unique ID so older responses cannot overwrite newer ones.
+  const requestId = ++predictionRequestId;
+  const button = document.getElementById('predictBtn');
+
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Calculating price and days…';
+  }
+
+  setMessage('Running price and time predictions…', 'info');
+
+  try {
+    const response = await fetch(api + '/predict', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ values })
+    });
+
+    const result = await response.json();
+
+    if (!response.ok) {
+      throw new Error(
+        typeof result.detail === 'string'
+          ? result.detail
+          : JSON.stringify(result.detail || 'Prediction failed')
+      );
+    }
+
+    // Ignore old responses if the user has changed the inputs again.
+    if (requestId !== predictionRequestId) return;
+
+    const price = Number(result.predicted_price);
+    const days = Number(result.predicted_dom_days);
+
+    if (!Number.isFinite(price) || !Number.isFinite(days)) {
+      throw new Error('The API returned invalid prediction values.');
+    }
+
+    const priceElement = document.getElementById('price');
+    const convertedElement = document.getElementById('priceConverted');
+    const daysElement = document.getElementById('dom');
+
+    if (priceElement) priceElement.textContent = priceUnits(price);
+
+    if (convertedElement) {
+      convertedElement.textContent =
+        `Approximate equivalent: ${money(price)} CNY`;
+    }
+
+    if (daysElement) {
+      daysElement.textContent =
+        `${Math.round(days).toLocaleString()} days`;
+    }
+
+    const interpretation = document.getElementById('interpret');
+
+    if (interpretation) {
+      interpretation.textContent =
+        `The model estimates ${money(price)} CNY and about ${Math.round(days)} days on market for the current input profile.`;
+    }
+
+    const decision = document.getElementById('decisionTitle');
+    if (decision) decision.textContent = decisionTitle(days);
+
+    const nextStep = document.getElementById('resultNextStep');
+
+    if (nextStep) {
+      nextStep.textContent =
+        days < 30
+          ? 'The model predicts a shorter time-on-market estimate. Compare other scenarios before drawing conclusions.'
+          : days < 90
+            ? 'The model predicts a mid-range time-on-market estimate. Use Scenario Lab to compare changes.'
+            : 'The model predicts a longer time-on-market estimate. Check the inputs and compare scenarios.';
+    }
+
+    const disclaimer = document.getElementById('predictionDisclaimer');
+
+    if (disclaimer) {
+      disclaimer.textContent =
+        'The model uses historical Beijing records and may be inaccurate for other locations, time periods, or properties unlike the training data.';
+    }
+
+    setMessage(
+      'Prediction updated successfully. Both price and days reflect the current inputs.',
+      'success'
+    );
+
+    // Only manually submitted predictions scroll to the results.
+    if (manual) {
+      document.querySelector('.result-stack')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }
+  } catch (error) {
+    if (requestId === predictionRequestId) {
+      setMessage(`Prediction failed: ${error.message}`, 'error');
+    }
+  } finally {
+    if (requestId === predictionRequestId && button) {
+      button.disabled = false;
+      button.innerHTML = 'Estimate price + time <span>→</span>';
+    }
   }
 }
 
-function decisionTitle(d) {
-  if (d < 30) return 'Shorter estimated market duration';
-  if (d < 90) return 'Mid-range estimated market duration';
+function setMessage(message, type) {
+  const element = document.getElementById('formMessage');
+
+  if (element) {
+    element.className = `form-message ${type || ''}`;
+    element.textContent = message;
+  }
+}
+
+function decisionTitle(days) {
+  if (days < 30) return 'Shorter estimated market duration';
+  if (days < 90) return 'Mid-range estimated market duration';
   return 'Longer estimated market duration';
 }
 
 async function init() {
   try {
-    const h = await get('/health');
-    apiOnline = h.status === 'ok';
+    const health = await get('/health');
+    apiOnline = health.status === 'ok';
 
     document.getElementById('status').textContent =
       apiOnline ? 'API connected' : 'API issue';
@@ -391,124 +454,147 @@ async function init() {
     document.getElementById('statusDot').style.background =
       apiOnline ? '#21c5a7' : '#ef4444';
 
-    const sb = document.querySelector('.side-bottom');
+    const sideBottom = document.querySelector('.side-bottom');
 
-    if (sb) {
-      sb.querySelector('b').textContent =
+    if (sideBottom) {
+      sideBottom.querySelector('b').textContent =
         apiOnline ? 'ML engine online' : 'ML engine offline';
-      sb.querySelector('small').textContent =
-        apiOnline ? 'Price + market-time models ready' : 'Start backend and refresh';
+
+      sideBottom.querySelector('small').textContent =
+        apiOnline
+          ? 'Price + market-time models ready'
+          : 'Start backend and refresh';
     }
 
     defaults = await get('/defaults');
+
     buildForm();
 
-    document.getElementById('a_square').value =
-      Number(defaults.square || 73.74);
-    document.getElementById('a_renov').value =
-      Number(defaults.renovationCondition || 3);
-    document.getElementById('a_floor').value =
-      Number(defaults.floor_num || 11);
+    const area = Number(defaults.square || 73.74);
+    const renovation = Number(defaults.renovationCondition || 3);
+    const floor = Number(defaults.floor_num || 11);
 
-    document.getElementById('b_square').value =
-      Number(defaults.square || 73.74) + 20;
-    document.getElementById('b_renov').value =
-      Number(defaults.renovationCondition) === 4 ? 3 : 4;
-    document.getElementById('b_floor').value =
-      Number(defaults.floor_num || 11);
+    const aSquare = document.getElementById('a_square');
+    const aRenov = document.getElementById('a_renov');
+    const aFloor = document.getElementById('a_floor');
+    const bSquare = document.getElementById('b_square');
+    const bRenov = document.getElementById('b_renov');
+    const bFloor = document.getElementById('b_floor');
 
-    const [m, im, s] = await Promise.all([
+    if (aSquare) aSquare.value = area;
+    if (aRenov) aRenov.value = renovation;
+    if (aFloor) aFloor.value = floor;
+
+    if (bSquare) bSquare.value = area + 20;
+    if (bRenov) bRenov.value = renovation === 4 ? 3 : 4;
+    if (bFloor) bFloor.value = floor;
+
+    const [metrics, importance, summary] = await Promise.all([
       get('/metrics'),
       get('/importance'),
       get('/summary')
     ]);
 
-    renderMetrics(m);
-    renderImportance(im);
+    renderMetrics(metrics);
+    renderImportance(importance);
 
     document.getElementById('rowsKpi').textContent =
-      Number(s.rows).toLocaleString();
-    document.getElementById('featuresKpi').textContent = s.features.length;
-    document.getElementById('priceR2').textContent =
-      Number(m.price_model.metrics.R2).toFixed(3);
-    document.getElementById('domR2').textContent =
-      Number(m.dom_model.metrics.R2).toFixed(3);
-    document.getElementById('formBadge').textContent =
-      `${s.features.length} INPUTS READY`;
+      Number(summary.rows).toLocaleString();
 
-    // Run the first prediction automatically using the loaded sample defaults.
-    // buildForm() has already attached the form submit handler at this point.
-    const predictionForm = document.getElementById('form');
-    if (apiOnline && predictionForm) {
-      predictionForm.requestSubmit();
+    document.getElementById('featuresKpi').textContent =
+      summary.features.length;
+
+    document.getElementById('priceR2').textContent =
+      Number(metrics.price_model.metrics.R2).toFixed(3);
+
+    document.getElementById('domR2').textContent =
+      Number(metrics.dom_model.metrics.R2).toFixed(3);
+
+    document.getElementById('formBadge').textContent =
+      `${Object.keys(fields).length} INPUTS READY`;
+
+    // First prediction: use all sample defaults immediately.
+    if (apiOnline && document.getElementById('form')) {
+      runPrediction(false);
     }
-  } catch (e) {
+  } catch (error) {
     apiOnline = false;
 
-    document.getElementById('status').textContent =
-      'API unavailable — start backend';
-    document.getElementById('statusDot').style.background = '#ef4444';
+    const status = document.getElementById('status');
+    if (status) status.textContent = 'API unavailable — start backend';
 
-    const sb = document.querySelector('.side-bottom');
+    const statusDot = document.getElementById('statusDot');
+    if (statusDot) statusDot.style.background = '#ef4444';
 
-    if (sb) {
-      sb.querySelector('b').textContent = 'ML engine offline';
-      sb.querySelector('small').textContent = 'Run run_homevision.bat';
+    const sideBottom = document.querySelector('.side-bottom');
+
+    if (sideBottom) {
+      sideBottom.querySelector('b').textContent = 'ML engine offline';
+      sideBottom.querySelector('small').textContent = 'Run run_homevision.bat';
     }
 
-    document.getElementById('formBadge').textContent = 'API OFFLINE';
-    document.getElementById('formFields').innerHTML =
-      '<div class="empty-state"><h3>Connect HomeVision to load inputs</h3><p>Start the backend, then refresh this page.</p></div>';
+    const badge = document.getElementById('formBadge');
+    if (badge) badge.textContent = 'API OFFLINE';
 
-    console.error('HomeVision API connection failed:', e);
+    const formFields = document.getElementById('formFields');
+
+    if (formFields) {
+      formFields.innerHTML =
+        '<div class="empty-state"><h3>Connect HomeVision to load inputs</h3><p>Start the backend, then refresh this page.</p></div>';
+    }
+
+    console.error('HomeVision API connection failed:', error);
   }
 }
-function renderMetrics(m) {
-  const p = m.price_model.metrics;
-  const d = m.dom_model.metrics;
+
+function renderMetrics(metrics) {
+  const price = metrics.price_model.metrics;
+  const dom = metrics.dom_model.metrics;
 
   const items = [
-    ['PRICE · MAE', p.MAE, 'Average absolute error in 10,000 CNY units'],
-    ['PRICE · RMSE', p.RMSE, 'Root-mean-square error in 10,000 CNY units; larger misses weigh more'],
-    ['PRICE · R²', p.R2, 'Fit score; closer to 1 is generally stronger'],
-    ['DOM · MAE', d.MAE, 'Average absolute error in days'],
-    ['DOM · RMSE', d.RMSE, 'Root-mean-square error in days; larger misses weigh more'],
-    ['DOM · R²', d.R2, 'Fit score; closer to 1 is generally stronger']
+    ['PRICE · MAE', price.MAE, 'Average absolute error in 10,000 CNY units'],
+    ['PRICE · RMSE', price.RMSE, 'Root-mean-square error in 10,000 CNY units; larger misses weigh more'],
+    ['PRICE · R²', price.R2, 'Fit score; closer to 1 is generally stronger'],
+    ['DOM · MAE', dom.MAE, 'Average absolute error in days'],
+    ['DOM · RMSE', dom.RMSE, 'Root-mean-square error in days; larger misses weigh more'],
+    ['DOM · R²', dom.R2, 'Fit score; closer to 1 is generally stronger']
   ];
 
-  document.getElementById('metrics').innerHTML = items.map(x =>
-    `<div class="metric" title="${escapeHtml(x[2])}">
-      <small>${x[0]}</small>
-      <strong>${Number(x[1]).toFixed(3)}</strong>
-      <span>${escapeHtml(x[2])}</span>
+  document.getElementById('metrics').innerHTML = items.map(item =>
+    `<div class="metric" title="${escapeHtml(item[2])}">
+      <small>${item[0]}</small>
+      <strong>${Number(item[1]).toFixed(3)}</strong>
+      <span>${escapeHtml(item[2])}</span>
     </div>`
   ).join('');
 
   document.getElementById('bench').innerHTML =
     `<div class="table-scroll"><table>
       <tr><th>Candidate model</th><th>Target</th><th>MAE</th><th>RMSE</th><th>R²</th></tr>
-      ${m.benchmark.map(x => `<tr>
-        <td><b>${escapeHtml(x.model)}</b></td>
-        <td>${escapeHtml(x.target)}</td>
-        <td>${Number(x.MAE).toFixed(2)}</td>
-        <td>${Number(x.RMSE).toFixed(2)}</td>
-        <td>${Number(x.R2).toFixed(3)}</td>
+      ${metrics.benchmark.map(item => `<tr>
+        <td><b>${escapeHtml(item.model)}</b></td>
+        <td>${escapeHtml(item.target)}</td>
+        <td>${Number(item.MAE).toFixed(2)}</td>
+        <td>${Number(item.RMSE).toFixed(2)}</td>
+        <td>${Number(item.R2).toFixed(3)}</td>
       </tr>`).join('')}
     </table></div>`;
 }
 
-function renderImportance(im) {
+function renderImportance(importance) {
   for (const [id, key] of [['priceImp', 'price'], ['domImp', 'dom']]) {
-    const arr = im[key] || [];
-    const max = Math.max(...arr.map(x => Math.abs(x.importance))) || 1;
+    const array = importance[key] || [];
+    const max = Math.max(
+      ...array.map(item => Math.abs(item.importance))
+    ) || 1;
 
     document.getElementById(id).innerHTML =
-      arr.slice(0, 10).map(x => `<div class="bar">
-        <b>${escapeHtml(fields[x.feature]?.label || x.feature)}</b>
+      array.slice(0, 10).map(item => `<div class="bar">
+        <b>${escapeHtml(fields[item.feature]?.label || item.feature)}</b>
         <div class="track" aria-label="Relative feature importance">
-          <div class="fill" style="width:${Math.min(100, Math.abs(x.importance) / max * 100)}%"></div>
+          <div class="fill" style="width:${Math.min(100, Math.abs(item.importance) / max * 100)}%"></div>
         </div>
-        <span>${Number(x.importance).toFixed(3)}</span>
+        <span>${Number(item.importance).toFixed(3)}</span>
       </div>`).join('') ||
       '<p>No feature-importance data is available.</p>';
   }
@@ -540,13 +626,27 @@ async function runWhatIf() {
   }
 
   const common = { ...defaults };
-  const a = { ...common, square: aArea, renovationCondition: aRenov, floor_num: aFloor };
-  const b = { ...common, square: bArea, renovationCondition: bRenov, floor_num: bFloor };
+
+  const a = {
+    ...common,
+    square: aArea,
+    renovationCondition: aRenov,
+    floor_num: aFloor
+  };
+
+  const b = {
+    ...common,
+    square: bArea,
+    renovationCondition: bRenov,
+    floor_num: bFloor
+  };
 
   try {
-    const r = await fetch(api + '/what-if', {
+    const response = await fetch(api + '/what-if', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({
         scenarios: [
           { name: 'Baseline', values: a },
@@ -555,36 +655,39 @@ async function runWhatIf() {
       })
     });
 
-    const x = await r.json();
-    if (!r.ok) throw new Error(x.detail || 'Scenario failed');
+    const result = await response.json();
 
-    const s = x.scenarios;
+    if (!response.ok) {
+      throw new Error(result.detail || 'Scenario failed');
+    }
+
+    const scenarios = result.scenarios;
 
     document.getElementById('scenarioOut').innerHTML =
       `<div class="panel-title">
         <div><span class="eyebrow">MODEL OUTPUTS</span><h3>Your side-by-side comparison</h3></div>
       </div>
       <div class="scenario-results-grid">
-        ${s.map((q, i) => `<div class="scenario-result-card ${i ? 'alt' : ''}">
-          <span>${i ? 'B · ALTERNATIVE' : 'A · BASELINE'}</span>
-          <h4>${escapeHtml(q.name)}</h4>
-          <strong>${money(q.price)}</strong>
+        ${scenarios.map((scenario, index) => `<div class="scenario-result-card ${index ? 'alt' : ''}">
+          <span>${index ? 'B · ALTERNATIVE' : 'A · BASELINE'}</span>
+          <h4>${escapeHtml(scenario.name)}</h4>
+          <strong>${money(scenario.price)}</strong>
           <small>Estimated sale price</small>
-          <b>${Math.round(q.dom).toLocaleString()} days</b>
+          <b>${Math.round(scenario.dom).toLocaleString()} days</b>
           <small>Estimated time on market</small>
         </div>`).join('')}
       </div>
       <div class="scenario-delta">
         <h4>Difference: Alternative minus Baseline</h4>
-        <p><b>${money(s[1].price - s[0].price)}</b> estimated price ·
-        <b>${(s[1].dom - s[0].dom >= 0 ? '+' : '') + Math.round(s[1].dom - s[0].dom)} days</b>
+        <p><b>${money(scenarios[1].price - scenarios[0].price)}</b> estimated price ·
+        <b>${(scenarios[1].dom - scenarios[0].dom >= 0 ? '+' : '') + Math.round(scenarios[1].dom - scenarios[0].dom)} days</b>
         estimated market time</p>
-        <p>${escapeHtml(x.insight)}</p>
+        <p>${escapeHtml(result.insight)}</p>
       </div>
       <p class="disclaimer">Only area, renovation code, and floor change in this quick comparison; all other features stay at sample defaults. These are model associations, not causal effects.</p>`;
-  } catch (e) {
+  } catch (error) {
     document.getElementById('scenarioOut').innerHTML =
-      `<p class="form-message error">Comparison failed: ${escapeHtml(e.message)}</p>`;
+      `<p class="form-message error">Comparison failed: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -597,91 +700,91 @@ document.getElementById('runWhatIfButton')
 init();
 
 async function loadFactorAnalysis() {
-  const out = document.getElementById('factorOut');
+  const output = document.getElementById('factorOut');
 
-  out.innerHTML =
+  output.innerHTML =
     '<p>Calculating factors from a reproducible sample of the historical dataset…</p>';
 
   try {
-    const x = await get('/factor-analysis');
+    const result = await get('/factor-analysis');
 
-    const factorHtml = x.factors.map(f =>
+    const factorHtml = result.factors.map(factor =>
       `<div class="panel" style="margin:10px 0;padding:14px">
-        <h4>${escapeHtml(f.name)}
-          <small>· ${Math.round(f.variance_share * 1000) / 10}% of extracted factor-score variance</small>
+        <h4>${escapeHtml(factor.name)}
+          <small>· ${Math.round(factor.variance_share * 1000) / 10}% of extracted factor-score variance</small>
         </h4>
         <div>
-          ${f.top_loadings.map(q => `<div class="bar">
-            <b>${escapeHtml(fields[q.feature]?.label || q.feature)}</b>
-            <span>loading ${q.loading.toFixed(3)}</span>
+          ${factor.top_loadings.map(item => `<div class="bar">
+            <b>${escapeHtml(fields[item.feature]?.label || item.feature)}</b>
+            <span>loading ${item.loading.toFixed(3)}</span>
           </div>`).join('')}
         </div>
       </div>`
     ).join('');
 
-    const corr = x.strong_correlations.length
+    const correlations = result.strong_correlations.length
       ? `<h4>Strong numeric correlations (|r| ≥ 0.45)</h4>
-         <div>${x.strong_correlations.map(q =>
-           `<p>${escapeHtml(fields[q.feature_a]?.label || q.feature_a)} ↔
-           ${escapeHtml(fields[q.feature_b]?.label || q.feature_b)}:
-           <b>${q.correlation.toFixed(2)}</b></p>`
+         <div>${result.strong_correlations.map(item =>
+           `<p>${escapeHtml(fields[item.feature_a]?.label || item.feature_a)} ↔
+           ${escapeHtml(fields[item.feature_b]?.label || item.feature_b)}:
+           <b>${item.correlation.toFixed(2)}</b></p>`
          ).join('')}</div>`
       : '<p>No feature pairs crossed the selected correlation threshold in this sample.</p>';
 
-    out.innerHTML =
-      `<p><b>Method:</b> ${escapeHtml(x.method)} ·
-      <b>Sample:</b> ${x.sample_rows.toLocaleString()} records ·
-      <b>Numeric variables:</b> ${x.features.length}</p>
-      ${factorHtml}${corr}
-      <p class="disclaimer">${escapeHtml(x.caveat)}</p>`;
-  } catch (e) {
-    out.innerHTML =
-      `<p class="form-message error">Factor analysis failed: ${escapeHtml(e.message)}</p>`;
+    output.innerHTML =
+      `<p><b>Method:</b> ${escapeHtml(result.method)} ·
+      <b>Sample:</b> ${result.sample_rows.toLocaleString()} records ·
+      <b>Numeric variables:</b> ${result.features.length}</p>
+      ${factorHtml}${correlations}
+      <p class="disclaimer">${escapeHtml(result.caveat)}</p>`;
+  } catch (error) {
+    output.innerHTML =
+      `<p class="form-message error">Factor analysis failed: ${escapeHtml(error.message)}</p>`;
   }
 }
 
 async function loadPreprocessingReport() {
   const status = document.getElementById('preprocessStatus');
 
-  if (status.dataset.loaded === 'yes') return;
+  if (!status || status.dataset.loaded === 'yes') return;
 
   status.innerHTML =
     '<span class="scope-icon">i</span><div><strong>Loading report…</strong><p>Reading dataset statistics from the API.</p></div>';
 
   try {
-    const r = await get('/preprocessing-report');
+    const report = await get('/preprocessing-report');
 
     document.getElementById('preprocessKpis').innerHTML =
       [
-        ['SOURCE RECORDS', r.source_rows.toLocaleString()],
-        ['SOURCE COLUMNS', r.source_columns],
-        ['DUPLICATE ROWS', r.duplicate_rows.toLocaleString()],
-        ['MODEL INPUTS', r.model_features]
-      ].map(([a, b]) => `<div class="kpi">
-        <span>${a}</span><strong>${b}</strong>
+        ['SOURCE RECORDS', report.source_rows.toLocaleString()],
+        ['SOURCE COLUMNS', report.source_columns],
+        ['DUPLICATE ROWS', report.duplicate_rows.toLocaleString()],
+        ['MODEL INPUTS', report.model_features]
+      ].map(([label, value]) => `<div class="kpi">
+        <span>${label}</span><strong>${value}</strong>
         <small>Computed from supplied data</small>
       </div>`).join('');
 
     document.getElementById('preprocessSteps').innerHTML =
-      r.steps.map((s, i) => `<div class="difference-card" style="margin:10px 0;padding:14px">
-        <span class="num">${String(i + 1).padStart(2, '0')}</span>
-        <div><h3>${escapeHtml(s.title)}</h3><p>${escapeHtml(s.detail)}</p></div>
+      report.steps.map((step, index) => `<div class="difference-card" style="margin:10px 0;padding:14px">
+        <span class="num">${String(index + 1).padStart(2, '0')}</span>
+        <div><h3>${escapeHtml(step.title)}</h3><p>${escapeHtml(step.detail)}</p></div>
       </div>`).join('');
 
     document.getElementById('preprocessTargets').innerHTML =
-      `<div class="bar"><b>Price target</b><span>${r.price_usable_rows.toLocaleString()} records</span></div>
-      <div class="bar"><b>DOM target</b><span>${r.dom_usable_rows.toLocaleString()} records</span></div>
+      `<div class="bar"><b>Price target</b><span>${report.price_usable_rows.toLocaleString()} records</span></div>
+      <div class="bar"><b>DOM target</b><span>${report.dom_usable_rows.toLocaleString()} records</span></div>
       <p class="disclaimer">The target counts differ because DOM can be missing even when price is valid.</p>
-      <p><b>Derived features:</b> ${r.engineered_features.map(escapeHtml).join(', ') || 'None detected'}</p>
-      <p><b>Removed fields:</b> ${r.removed_columns.map(escapeHtml).join(', ') || 'None detected'}</p>`;
+      <p><b>Derived features:</b> ${report.engineered_features.map(escapeHtml).join(', ') || 'None detected'}</p>
+      <p><b>Removed fields:</b> ${report.removed_columns.map(escapeHtml).join(', ') || 'None detected'}</p>`;
 
     document.getElementById('missingTable').innerHTML =
-      r.missing_values.length
+      report.missing_values.length
         ? `<table><thead><tr><th>Source column</th><th>Missing</th><th>Missing %</th></tr></thead>
-           <tbody>${r.missing_values.map(x => `<tr>
-             <td>${escapeHtml(x.column)}</td>
-             <td>${x.missing.toLocaleString()}</td>
-             <td>${x.percent}%</td>
+           <tbody>${report.missing_values.map(item => `<tr>
+             <td>${escapeHtml(item.column)}</td>
+             <td>${item.missing.toLocaleString()}</td>
+             <td>${item.percent}%</td>
            </tr>`).join('')}</tbody></table>`
         : '<p>No missing values found in source columns.</p>';
 
@@ -689,8 +792,8 @@ async function loadPreprocessingReport() {
       '<span class="scope-icon">✓</span><div><strong>Report loaded from the included dataset</strong><p>Missing values and duplicate counts are computed from source data. Imputation and encoding are performed in the training pipeline.</p></div>';
 
     status.dataset.loaded = 'yes';
-  } catch (e) {
+  } catch (error) {
     status.innerHTML =
-      `<span class="scope-icon">!</span><div><strong>Could not load report</strong><p>${escapeHtml(e.message)}. Check that the API is running.</p></div>`;
+      `<span class="scope-icon">!</span><div><strong>Could not load report</strong><p>${escapeHtml(error.message)}. Check that the API is running.</p></div>`;
   }
 }

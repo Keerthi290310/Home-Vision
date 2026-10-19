@@ -5,6 +5,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import FactorAnalysis
+
 import joblib
 import json
 import os
@@ -15,9 +16,11 @@ import sys
 
 from ml.preprocessing import transform_features
 
-ROOT = os.path.dirname(os.path.dirname(__file__))
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(ROOT, "artifacts")
 DATA = os.path.join(ROOT, "data", "new.csv")
+FRONTEND = os.path.join(ROOT, "frontend")
 
 app = FastAPI(
     title="HomeVision ML API",
@@ -41,11 +44,16 @@ def load_or_rebuild_models():
         )
     except Exception as first_error:
         print(
-            "Saved model artifacts are incompatible. "
-            "Rebuilding models from data/new.csv..."
+            "Saved model artifacts could not be loaded. "
+            "Attempting to rebuild models from data/new.csv..."
         )
 
         train_script = os.path.join(ROOT, "ml", "train.py")
+
+        if not os.path.isfile(train_script):
+            raise RuntimeError(
+                f"Training script not found: {train_script}"
+            ) from first_error
 
         result = subprocess.run(
             [sys.executable, train_script, "--fast"],
@@ -56,8 +64,10 @@ def load_or_rebuild_models():
 
         if result.returncode != 0:
             raise RuntimeError(
-                "Automatic model rebuild failed. "
-                "Run: python ml/train.py\n" + result.stderr
+                "Automatic model rebuild failed.\n"
+                + result.stdout
+                + "\n"
+                + result.stderr
             ) from first_error
 
         try:
@@ -69,25 +79,28 @@ def load_or_rebuild_models():
             raise RuntimeError(
                 "Models were rebuilt but could not be loaded: "
                 + str(second_error)
-            ) from first_error
+            ) from second_error
+
+
+def load_json(filename):
+    path = os.path.join(ART, filename)
+
+    if not os.path.isfile(path):
+        raise RuntimeError(f"Required artifact not found: {path}")
+
+    with open(path, encoding="utf-8") as file:
+        return json.load(file)
 
 
 price_model, dom_model = load_or_rebuild_models()
 
-with open(os.path.join(ART, "metrics.json"), encoding="utf-8") as f:
-    metrics = json.load(f)
+metrics = load_json("metrics.json")
+importance = load_json("feature_importance.json")
+schema = load_json("feature_schema.json")
 
-with open(
-    os.path.join(ART, "feature_importance.json"), encoding="utf-8"
-) as f:
-    importance = json.load(f)
+if not os.path.isfile(DATA):
+    raise RuntimeError(f"Dataset not found: {DATA}")
 
-with open(
-    os.path.join(ART, "feature_schema.json"), encoding="utf-8"
-) as f:
-    schema = json.load(f)
-
-# Read the dataset once. low_memory=True reduces CSV parser memory usage.
 raw = pd.read_csv(
     DATA,
     encoding="latin1",
@@ -99,53 +112,61 @@ def transform(data):
     return transform_features(data)
 
 
-# Count usable targets without making large copies of the dataset.
+# Count usable targets.
+for target in ("totalPrice", "DOM"):
+    if target not in raw.columns:
+        raise RuntimeError(
+            f"Required target column '{target}' is missing from data/new.csv."
+        )
+
 price_values = pd.to_numeric(raw["totalPrice"], errors="coerce")
 dom_values = pd.to_numeric(raw["DOM"], errors="coerce")
 
-price_usable_mask = (
-    (price_values > 0) & np.isfinite(price_values)
+price_usable_rows = int(
+    ((price_values > 0) & np.isfinite(price_values)).sum()
 )
-dom_usable_mask = (
-    (dom_values >= 0) & np.isfinite(dom_values)
+dom_usable_rows = int(
+    ((dom_values >= 0) & np.isfinite(dom_values)).sum()
 )
-
-price_usable_rows = int(price_usable_mask.sum())
-dom_usable_rows = int(dom_usable_mask.sum())
 
 del price_values, dom_values
-del price_usable_mask, dom_usable_mask
 
-features = schema["features"]
+features = schema.get("features", [])
 
-if len(features) != 22 or len(set(features)) != len(features):
+if (
+    not isinstance(features, list)
+    or len(features) != 22
+    or len(set(features)) != len(features)
+):
     raise RuntimeError(
         "Invalid feature schema: expected 22 unique model inputs."
     )
 
-for model_name, model in [
+
+for model_name, model in (
     ("price", price_model),
     ("DOM", dom_model)
-]:
+):
     model_features = list(
         getattr(model, "feature_names_in_", [])
     )
 
-    if model_features != features:
+    if model_features and model_features != features:
         raise RuntimeError(
             f"{model_name} model feature order does not match "
-            "feature_schema.json; retrain with python ml/train.py."
+            "feature_schema.json. Retrain using ml/train.py."
         )
 
-if metrics.get("dataset", {}).get("features") != features:
+
+metrics_features = metrics.get("dataset", {}).get("features")
+
+if metrics_features is not None and metrics_features != features:
     raise RuntimeError(
-        "metrics.json feature list does not match "
-        "feature_schema.json; retrain with python ml/train.py."
+        "metrics.json feature list does not match feature_schema.json."
     )
 
 
-# Build defaults using a reproducible sample instead of transforming
-# the entire dataset during application startup.
+# Generate defaults using a reproducible sample.
 DEFAULT_SAMPLE_SIZE = min(5000, len(raw))
 default_raw = raw.head(DEFAULT_SAMPLE_SIZE).copy()
 default_transformed = transform(default_raw)
@@ -181,9 +202,11 @@ del default_raw, default_transformed
 os.makedirs(ART, exist_ok=True)
 
 with open(
-    os.path.join(ART, "defaults.json"), "w", encoding="utf-8"
-) as f:
-    json.dump(defaults, f, indent=2)
+    os.path.join(ART, "defaults.json"),
+    "w",
+    encoding="utf-8"
+) as file:
+    json.dump(defaults, file, indent=2)
 
 
 class PropertyInput(BaseModel):
@@ -192,9 +215,8 @@ class PropertyInput(BaseModel):
 
 def frame(values):
     data = defaults.copy()
-
-    # Only accept inputs used by the trained models.
     allowed = set(features)
+
     data.update({
         key: value
         for key, value in values.items()
@@ -207,7 +229,12 @@ def frame(values):
 
 
 def clean_pred(value, low=0):
-    return max(float(value), low)
+    number = float(value)
+
+    if not np.isfinite(number):
+        raise ValueError("The model returned a non-finite prediction.")
+
+    return max(number, low)
 
 
 FIELD_LIMITS = {
@@ -257,6 +284,9 @@ INTEGER_FIELDS = {
 
 
 def validate_values(values):
+    if not isinstance(values, dict):
+        raise HTTPException(422, "values must be a JSON object.")
+
     for key, value in values.items():
         if key not in features:
             continue
@@ -291,10 +321,52 @@ def validate_values(values):
     quarter = values.get("trade_quarter")
 
     if month is not None and quarter is not None:
-        if int(quarter) != (int(month) - 1) // 3 + 1:
+        try:
+            expected_quarter = (int(month) - 1) // 3 + 1
+            actual_quarter = int(quarter)
+        except (TypeError, ValueError):
+            raise HTTPException(
+                422, "trade_month and trade_quarter must be integers."
+            )
+
+        if actual_quarter != expected_quarter:
             raise HTTPException(
                 422, "trade_month and trade_quarter do not match."
             )
+
+
+def interpret(price, dom):
+    if dom < 30:
+        speed = "shorter estimated market duration"
+    elif dom < 90:
+        speed = "moderate estimated market duration"
+    else:
+        speed = "longer estimated market duration"
+
+    return (
+        f"Estimated value: {price:.2f} (10k CNY) "
+        f"with a {speed} of about {dom:.0f} days."
+    )
+
+
+def scenario_insight(rows):
+    if len(rows) < 2:
+        return "Add at least two scenarios to compare trade-offs."
+
+    best = max(rows, key=lambda item: item["price"])
+    fastest = min(rows, key=lambda item: item["dom"])
+
+    if best["name"] == fastest["name"]:
+        return (
+            f"{best['name']} has both the highest estimated price "
+            "and shortest estimated DOM among the scenarios."
+        )
+
+    return (
+        f"{best['name']} has the highest estimated price, while "
+        f"{fastest['name']} has the shortest estimated DOM. "
+        "The choice is a price-versus-time trade-off."
+    )
 
 
 @app.get("/health")
@@ -327,11 +399,26 @@ def summary():
     }
 
 
+@app.get("/defaults")
+def get_defaults():
+    return defaults
+
+
+@app.get("/metrics")
+def get_metrics():
+    return metrics
+
+
+# Support both route names so the existing frontend can use either.
+@app.get("/importance")
+@app.get("/feature-importance")
+def get_importance():
+    return importance
+
+
 @app.get("/preprocessing-report")
 @lru_cache(maxsize=1)
 def preprocessing_report():
-    """Return a cached data-quality report without transforming all rows."""
-
     missing = raw.isna().sum().sort_values(ascending=False)
 
     missing_rows = [
@@ -339,35 +426,39 @@ def preprocessing_report():
             "column": str(column),
             "missing": int(count),
             "percent": round(
-                float(count) / max(len(raw), 1) * 100, 2
+                float(count) / max(len(raw), 1) * 100,
+                2
             )
         }
         for column, count in missing.items()
         if int(count) > 0
     ]
 
-    # The same transformation function is used for training and inference.
-    # Inspect a small sample to identify available engineered features.
     report_sample = transform(
         raw.head(min(1000, len(raw))).copy()
     )
 
     engineered = [
         column
-        for column in [
+        for column in (
             "floor_num",
             "trade_year",
             "trade_month",
             "trade_quarter"
-        ]
+        )
         if column in report_sample.columns
     ]
 
     removed_columns = [
         column
-        for column in [
-            "url", "id", "Cid", "floor", "tradeTime", "price"
-        ]
+        for column in (
+            "url",
+            "id",
+            "Cid",
+            "floor",
+            "tradeTime",
+            "price"
+        )
         if column in raw.columns
     ]
 
@@ -446,24 +537,9 @@ def preprocessing_report():
     }
 
 
-@app.get("/metrics")
-def get_metrics():
-    return metrics
-
-
-@app.get("/importance")
-def get_importance():
-    return importance
-
-
 @app.get("/factor-analysis")
 @lru_cache(maxsize=1)
 def factor_analysis():
-    """
-    Exploratory factor analysis using a smaller reproducible sample.
-    Cached after the first successful calculation to speed up later calls.
-    """
-
     candidates = [
         "square",
         "livingRoom",
@@ -482,7 +558,6 @@ def factor_analysis():
         "Lat"
     ]
 
-    # Sample before transforming to avoid transforming the full CSV.
     sample_raw = raw.sample(
         n=min(2000, len(raw)),
         random_state=42
@@ -600,47 +675,64 @@ def factor_analysis():
     }
 
 
-@app.get("/defaults")
-def get_defaults():
-    return defaults
-
-
 @app.post("/predict")
 def predict(req: PropertyInput):
     try:
         validate_values(req.values)
 
         X = frame(req.values)
-        predicted_price = clean_pred(price_model.predict(X)[0])
-        predicted_dom = clean_pred(dom_model.predict(X)[0])
+
+        predicted_price = clean_pred(
+            price_model.predict(X)[0]
+        )
+        predicted_dom = clean_pred(
+            dom_model.predict(X)[0]
+        )
 
         return {
             "predicted_price": predicted_price,
             "predicted_dom_days": predicted_dom,
             "price_unit": "10k CNY",
             "interpretation": interpret(
-                predicted_price, predicted_dom
+                predicted_price,
+                predicted_dom
             )
         }
 
     except HTTPException:
         raise
     except Exception as error:
-        raise HTTPException(400, str(error))
+        print(f"Prediction error: {error}")
+        raise HTTPException(
+            400,
+            f"Prediction failed: {error}"
+        )
 
 
 @app.post("/what-if")
 def whatif(req: dict):
-    scenarios = req.get("scenarios", [])
+    # Accept the existing frontend's {"values": {...}} format,
+    # as well as the multi-scenario {"scenarios": [...]} format.
+    scenarios = req.get("scenarios")
+
+    if scenarios is None and isinstance(req.get("values"), dict):
+        scenarios = [
+            {
+                "name": "Current Property",
+                "values": req["values"]
+            }
+        ]
 
     if not isinstance(scenarios, list) or not scenarios:
         raise HTTPException(
-            400, "Provide a non-empty scenarios list."
+            400,
+            "Provide property values or a non-empty scenarios list."
         )
 
     if len(scenarios) > 10:
         raise HTTPException(
-            422, "Compare at most 10 scenarios per request."
+            422,
+            "Compare at most 10 scenarios per request."
         )
 
     output = []
@@ -648,21 +740,28 @@ def whatif(req: dict):
     for i, scenario in enumerate(scenarios, 1):
         if not isinstance(scenario, dict):
             raise HTTPException(
-                422, f"Scenario {i} must be an object."
+                422,
+                f"Scenario {i} must be an object."
             )
 
         values = scenario.get("values", {})
 
         if not isinstance(values, dict):
             raise HTTPException(
-                422, f"Scenario {i} values must be an object."
+                422,
+                f"Scenario {i} values must be an object."
             )
 
         validate_values(values)
 
         X = frame(values)
-        predicted_price = clean_pred(price_model.predict(X)[0])
-        predicted_dom = clean_pred(dom_model.predict(X)[0])
+
+        predicted_price = clean_pred(
+            price_model.predict(X)[0]
+        )
+        predicted_dom = clean_pred(
+            dom_model.predict(X)[0]
+        )
 
         name = scenario.get("name", f"Scenario {i}")
 
@@ -681,8 +780,12 @@ def whatif(req: dict):
     base = output[0]
 
     for result in output:
-        result["price_change"] = result["price"] - base["price"]
-        result["dom_change"] = result["dom"] - base["dom"]
+        result["price_change"] = (
+            result["price"] - base["price"]
+        )
+        result["dom_change"] = (
+            result["dom"] - base["dom"]
+        )
 
     return {
         "scenarios": output,
@@ -690,45 +793,11 @@ def whatif(req: dict):
     }
 
 
-def interpret(price, dom):
-    if dom < 30:
-        speed = "shorter estimated market duration"
-    elif dom < 90:
-        speed = "moderate estimated market duration"
-    else:
-        speed = "longer estimated market duration"
-
-    return (
-        f"Estimated value: {price:.2f} (10k CNY) "
-        f"with a {speed} of about {dom:.0f} days."
+# Serve the frontend from the same service when the frontend directory exists.
+# Keep this mount last so API routes are matched first.
+if os.path.isdir(FRONTEND):
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND, html=True),
+        name="frontend"
     )
-
-
-def scenario_insight(rows):
-    if len(rows) < 2:
-        return "Add at least two scenarios to compare trade-offs."
-
-    best = max(rows, key=lambda item: item["price"])
-    fastest = min(rows, key=lambda item: item["dom"])
-
-    if best["name"] == fastest["name"]:
-        return (
-            f"{best['name']} has both the highest estimated price "
-            "and shortest estimated DOM among the scenarios."
-        )
-
-    return (
-        f"{best['name']} has the highest estimated price, while "
-        f"{fastest['name']} has the shortest estimated DOM. "
-        "The choice is a price-versus-time trade-off."
-    )
-
-
-app.mount(
-    "/",
-    StaticFiles(
-        directory=os.path.join(ROOT, "frontend"),
-        html=True
-    ),
-    name="frontend"
-)

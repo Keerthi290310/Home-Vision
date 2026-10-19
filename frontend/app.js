@@ -8,28 +8,30 @@ let predictionTimer = null;
 let predictionRequestId = 0;
 
 const fields = {
-  Lng: { label: 'Longitude', help: 'East–west map coordinate. Keep the supplied sample unless you know the coordinate.', group: 'Location & neighbourhood', min: 70, max: 140, step: 0.000001 },
-  Lat: { label: 'Latitude', help: 'North–south map coordinate. The included sample is in Beijing.', group: 'Location & neighbourhood', min: 15, max: 55, step: 0.000001 },
-  district: { label: 'District code', help: 'Numeric district identifier from the source dataset. The code-to-name mapping is not included, so do not guess.', group: 'Location & neighbourhood', type: 'code', min: 1, max: 13, options: [1,2,3,4,5,6,7,8,9,10,11,12,13] },
-  communityAverage: { label: 'Community average unit price', help: 'Historical community-level average price in the source dataset (CNY per m²). Use a known comparable value.', group: 'Location & neighbourhood', min: 0, max: 1000000, step: 100 },
-  subway: { label: 'Subway access', help: 'Does the source record indicate subway access?', group: 'Location & neighbourhood', type: 'binary' },
+  Lng: { label: 'Longitude', help: 'East–west map coordinate.', group: 'Location & neighbourhood', min: 70, max: 140, step: 0.000001 },
+  Lat: { label: 'Latitude', help: 'North–south map coordinate.', group: 'Location & neighbourhood', min: 15, max: 55, step: 0.000001 },
+  district: { label: 'District code', help: 'Numeric district identifier from the dataset.', group: 'Location & neighbourhood', type: 'code', min: 1, max: 13, options: [1,2,3,4,5,6,7,8,9,10,11,12,13] },
+  communityAverage: { label: 'Community average unit price', help: 'Historical average price in CNY per m².', group: 'Location & neighbourhood', min: 0, max: 1000000, step: 100 },
+  subway: { label: 'Subway access', help: 'Does the record indicate subway access?', group: 'Location & neighbourhood', type: 'binary' },
+
   square: { label: 'Living area (m²)', help: 'Indoor floor area in square metres.', group: 'Home & building', min: 10, max: 1000, step: 0.1 },
   livingRoom: { label: 'Living rooms', help: 'Number of living rooms.', group: 'Home & building', min: 0, max: 20, step: 1 },
-  drawingRoom: { label: 'Drawing rooms', help: 'Number of drawing rooms, as recorded in the dataset.', group: 'Home & building', min: 0, max: 20, step: 1 },
+  drawingRoom: { label: 'Drawing rooms', help: 'Number of drawing rooms.', group: 'Home & building', min: 0, max: 20, step: 1 },
   kitchen: { label: 'Kitchens', help: 'Number of kitchens.', group: 'Home & building', min: 0, max: 10, step: 1 },
   bathRoom: { label: 'Bathrooms', help: 'Number of bathrooms.', group: 'Home & building', min: 0, max: 20, step: 1 },
-  floor_num: { label: 'Floor number', help: 'Numeric floor extracted from the source listing. The original floor category is simplified to a number.', group: 'Home & building', min: 0, max: 100, step: 1 },
-  constructionTime: { label: 'Construction year / unknown', help: 'Historical Beijing data supports years through 2016. Use 0 only when the source year is unknown.', group: 'Home & building', min: 0, max: 2016, step: 1 },
-  renovationCondition: { label: 'Renovation condition code', help: 'Source dataset code (1–4). The source files do not include the code descriptions; use a verified code.', group: 'Home & building', type: 'code', min: 1, max: 4, options: [1,2,3,4] },
-  buildingType: { label: 'Building type code', help: 'Source dataset code (1–4). Code meanings are not supplied in the project data.', group: 'Home & building', type: 'code', min: 1, max: 4, options: [1,2,3,4] },
-  buildingStructure: { label: 'Building structure code', help: 'Source dataset code (1–6). Code meanings are not supplied in the project data.', group: 'Home & building', type: 'code', min: 1, max: 6, options: [1,2,3,4,5,6] },
-  ladderRatio: { label: 'Ladder ratio', help: 'Ratio stored in the source dataset. Enter a value from 0 to 1.', group: 'Home & building', min: 0, max: 1, step: 0.001 },
-  elevator: { label: 'Elevator available', help: 'Does the source record indicate an elevator?', group: 'Home & building', type: 'binary' },
-  fiveYearsProperty: { label: 'Property within five-year category', help: 'Source dataset flag. Follow the dataset definition rather than guessing.', group: 'Home & building', type: 'binary' },
-  followers: { label: 'Listing followers', help: 'Number of followers/interested users recorded for the listing. This may not be known for a new property.', group: 'Listing & market timing', min: 0, max: 1000000, step: 1 },
-  trade_year: { label: 'Historical trade year', help: 'The dataset contains transaction dates from 2002 through January 2018. Predictions outside this period are not supported.', group: 'Listing & market timing', min: 2002, max: 2018, step: 1 },
-  trade_month: { label: 'Recorded trade month', help: 'Month number in the recorded transaction date (1–12).', group: 'Listing & market timing', min: 1, max: 12, step: 1 },
-  trade_quarter: { label: 'Recorded trade quarter', help: 'Quarter number (1–4). Keep consistent with the month.', group: 'Listing & market timing', min: 1, max: 4, step: 1 }
+  floor_num: { label: 'Floor number', help: 'Numeric floor from the source listing.', group: 'Home & building', min: 0, max: 100, step: 1 },
+  constructionTime: { label: 'Construction year / unknown', help: 'Use 0 if the year is unknown.', group: 'Home & building', min: 0, max: 2016, step: 1 },
+  renovationCondition: { label: 'Renovation condition code', help: 'Dataset code 1–4.', group: 'Home & building', type: 'code', min: 1, max: 4, options: [1,2,3,4] },
+  buildingType: { label: 'Building type code', help: 'Dataset code 1–4.', group: 'Home & building', type: 'code', min: 1, max: 4, options: [1,2,3,4] },
+  buildingStructure: { label: 'Building structure code', help: 'Dataset code 1–6.', group: 'Home & building', type: 'code', min: 1, max: 6, options: [1,2,3,4,5,6] },
+  ladderRatio: { label: 'Ladder ratio', help: 'Enter a value from 0 to 1.', group: 'Home & building', min: 0, max: 1, step: 0.001 },
+  elevator: { label: 'Elevator available', help: 'Does the record indicate an elevator?', group: 'Home & building', type: 'binary' },
+  fiveYearsProperty: { label: 'Property within five-year category', help: 'Dataset flag.', group: 'Home & building', type: 'binary' },
+
+  followers: { label: 'Listing followers', help: 'Number of interested users.', group: 'Listing & market timing', min: 0, max: 1000000, step: 1 },
+  trade_year: { label: 'Historical trade year', help: 'Dataset transactions range from 2002 to 2018.', group: 'Listing & market timing', min: 2002, max: 2018, step: 1 },
+  trade_month: { label: 'Recorded trade month', help: 'Month number 1–12.', group: 'Listing & market timing', min: 1, max: 12, step: 1 },
+  trade_quarter: { label: 'Recorded trade quarter', help: 'Quarter number 1–4.', group: 'Listing & market timing', min: 1, max: 4, step: 1 }
 };
 
 const groups = [
@@ -52,9 +54,7 @@ const money = n =>
   `¥${Math.round(Number(n) * 10000).toLocaleString('en-US')}`;
 
 const priceUnits = n =>
-  `${Number(n).toLocaleString(undefined, {
-    maximumFractionDigits: 2
-  })} × 10,000 CNY`;
+  `${Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })} × 10,000 CNY`;
 
 function showTab(id, options = {}) {
   const target = document.getElementById(id);
@@ -94,8 +94,8 @@ function showTab(id, options = {}) {
   if (id === 'factor') loadFactorAnalysis();
 
   if (options.focus && id === 'predict') {
-    const first = target.querySelector('#formFields input, #formFields select');
-    if (first) first.focus({ preventScroll: true });
+    target.querySelector('#formFields input, #formFields select')
+      ?.focus({ preventScroll: true });
   }
 
   return true;
@@ -117,9 +117,7 @@ async function get(url) {
   const response = await fetch(api + url);
 
   if (!response.ok) {
-    throw new Error(
-      (await response.text()) || `Request failed (${response.status})`
-    );
+    throw new Error((await response.text()) || `Request failed (${response.status})`);
   }
 
   return response.json();
@@ -136,15 +134,7 @@ function escapeHtml(value) {
 }
 
 function fieldMarkup(key) {
-  const field = fields[key] || {
-    label: key,
-    help: 'Feature used by the model.',
-    group: 'Other inputs',
-    min: 0,
-    max: 1000000,
-    step: 'any'
-  };
-
+  const field = fields[key];
   const value = defaults[key] ?? '';
   const id = `field-${key}`;
   let input = '';
@@ -182,7 +172,7 @@ function buildForm() {
 
   let html = `<div class="form-note">
     <b>How to get a useful estimate</b>
-    <span>Use accurate known values. If a value is unknown, keep the sample default and treat the result as exploratory. Coded categories are dataset IDs—not human-readable labels.</span>
+    <span>Change any inputs you know. All remaining inputs keep their current values. Predictions are estimates based on historical data.</span>
   </div>`;
 
   for (const group of groups) {
@@ -198,7 +188,7 @@ function buildForm() {
     <button class="primary" type="submit" id="predictBtn">
       Estimate price + time <span>→</span>
     </button>
-    <p>Results are estimates based on historical patterns, not guaranteed outcomes.</p>
+    <p>Results are estimates, not guaranteed outcomes.</p>
   </div>`;
 
   document.getElementById('formFields').innerHTML = html;
@@ -209,43 +199,38 @@ function buildForm() {
   document.getElementById('formBadge').textContent =
     apiOnline ? 'MODEL CONNECTED' : 'API OFFLINE';
 
-  /*
-   * Core behaviour:
-   * Whenever any input changes, collect all 22 current values
-   * and send them to the prediction API.
-   */
-  form.addEventListener('input', () => {
-    schedulePrediction(700);
+  // One delegated listener handles changes to every input.
+  form.addEventListener('input', event => {
+    if (event.target.matches('#formFields input, #formFields select')) {
+      schedulePrediction(700);
+    }
   });
 
-  form.addEventListener('change', () => {
-    schedulePrediction(250);
+  form.addEventListener('change', event => {
+    if (event.target.matches('#formFields input, #formFields select')) {
+      schedulePrediction(150);
+    }
   });
 
   form.addEventListener('submit', async event => {
     event.preventDefault();
-
     clearTimeout(predictionTimer);
-
     await runPrediction(true);
   });
 
   document.getElementById('resetDefaults').onclick = () => {
+    clearTimeout(predictionTimer);
+
     for (const [key, value] of Object.entries(defaults)) {
       const element = form.elements.namedItem(key);
       if (element) element.value = value;
     }
 
     setMessage('Sample defaults restored. Updating predictions…', 'info');
-
     schedulePrediction(0);
   };
 }
 
-/*
- * Debounce automatic predictions so typing a number does not
- * send a request after every keystroke.
- */
 function schedulePrediction(delay = 500) {
   clearTimeout(predictionTimer);
 
@@ -256,34 +241,37 @@ function schedulePrediction(delay = 500) {
 
 async function runPrediction(manual = false) {
   const form = document.getElementById('form');
+  if (!form) return;
 
-  if (!form || !apiOnline) {
-    setMessage(
-      'The API is not connected. Start the backend and refresh this page.',
-      'error'
-    );
+  // Invalidate previous requests immediately, including when the
+  // latest input is temporarily invalid while the user is typing.
+  const requestId = ++predictionRequestId;
+
+  if (!apiOnline) {
+    setMessage('API is offline. Start the backend and refresh the page.', 'error');
     return;
   }
 
-  // Do not predict while a field contains an invalid or incomplete value.
+  // A temporarily empty number field should not send bad data.
+  // The next valid input event automatically tries again.
   if (!form.checkValidity()) {
-    setMessage(
-      'Finish entering a valid value. All other inputs can remain unchanged.',
-      'info'
-    );
+    setMessage('Enter a valid value. Other inputs will keep their current values.', 'info');
     return;
   }
 
   const values = {};
 
-  /*
-   * IMPORTANT:
-   * Read all model fields, not just the field the user changed.
-   * This preserves every other current/default value.
-   */
+  // Always send every field, not just the field that changed.
   for (const key of Object.keys(fields)) {
     const element = form.elements.namedItem(key);
-    const number = Number(element?.value);
+    const rawValue = element?.value;
+
+    if (rawValue === '' || rawValue == null) {
+      setMessage(`Please enter a value for ${fields[key].label}.`, 'info');
+      return;
+    }
+
+    const number = Number(rawValue);
     const field = fields[key];
 
     if (!Number.isFinite(number)) {
@@ -291,16 +279,19 @@ async function runPrediction(manual = false) {
       return;
     }
 
-    if (number < field.min || number > field.max) {
-      setMessage(
-        `${field.label} must be between ${field.min} and ${field.max}.`,
-        'error'
-      );
+    if (field.min !== undefined && number < field.min) {
+      setMessage(`${field.label} must be at least ${field.min}.`, 'error');
       element.focus();
       return;
     }
 
-    if (Number(field.step) === 1 && !Number.isInteger(number)) {
+    if (field.max !== undefined && number > field.max) {
+      setMessage(`${field.label} must not exceed ${field.max}.`, 'error');
+      element.focus();
+      return;
+    }
+
+    if (field.step === 1 && !Number.isInteger(number)) {
       setMessage(`${field.label} must be a whole number.`, 'error');
       element.focus();
       return;
@@ -309,34 +300,26 @@ async function runPrediction(manual = false) {
     values[key] = number;
   }
 
-  // Keep month and quarter consistent.
-  const month = values.trade_month;
-  const correctQuarter = Math.ceil(month / 3);
-
+  // Keep the quarter consistent with the selected month.
+  const correctQuarter = Math.ceil(values.trade_month / 3);
   if (values.trade_quarter !== correctQuarter) {
     values.trade_quarter = correctQuarter;
-
     const quarterInput = form.elements.namedItem('trade_quarter');
     if (quarterInput) quarterInput.value = String(correctQuarter);
   }
 
-  // Give every request a unique ID so older responses cannot overwrite newer ones.
-  const requestId = ++predictionRequestId;
   const button = document.getElementById('predictBtn');
-
   if (button) {
     button.disabled = true;
     button.textContent = 'Calculating price and days…';
   }
 
-  setMessage('Running price and time predictions…', 'info');
+  setMessage('Running predictions for the current input values…', 'info');
 
   try {
     const response = await fetch(api + '/predict', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ values })
     });
 
@@ -350,14 +333,16 @@ async function runPrediction(manual = false) {
       );
     }
 
-    // Ignore old responses if the user has changed the inputs again.
+    // Ignore responses for older input states.
     if (requestId !== predictionRequestId) return;
 
     const price = Number(result.predicted_price);
     const days = Number(result.predicted_dom_days);
 
     if (!Number.isFinite(price) || !Number.isFinite(days)) {
-      throw new Error('The API returned invalid prediction values.');
+      throw new Error(
+        'Invalid API response. Expected predicted_price and predicted_dom_days.'
+      );
     }
 
     const priceElement = document.getElementById('price');
@@ -365,51 +350,42 @@ async function runPrediction(manual = false) {
     const daysElement = document.getElementById('dom');
 
     if (priceElement) priceElement.textContent = priceUnits(price);
-
     if (convertedElement) {
-      convertedElement.textContent =
-        `Approximate equivalent: ${money(price)} CNY`;
+      convertedElement.textContent = `Approximate equivalent: ${money(price)} CNY`;
     }
-
     if (daysElement) {
-      daysElement.textContent =
-        `${Math.round(days).toLocaleString()} days`;
+      daysElement.textContent = `${Math.round(days).toLocaleString()} days`;
     }
 
     const interpretation = document.getElementById('interpret');
-
     if (interpretation) {
       interpretation.textContent =
-        `The model estimates ${money(price)} CNY and about ${Math.round(days)} days on market for the current input profile.`;
+        `For the current input profile, the estimated sale price is ${money(price)} CNY and estimated time on market is ${Math.round(days)} days.`;
     }
 
     const decision = document.getElementById('decisionTitle');
     if (decision) decision.textContent = decisionTitle(days);
 
     const nextStep = document.getElementById('resultNextStep');
-
     if (nextStep) {
-      nextStep.textContent =
-        days < 30
-          ? 'The model predicts a shorter time-on-market estimate. Compare other scenarios before drawing conclusions.'
-          : days < 90
-            ? 'The model predicts a mid-range time-on-market estimate. Use Scenario Lab to compare changes.'
-            : 'The model predicts a longer time-on-market estimate. Check the inputs and compare scenarios.';
+      nextStep.textContent = days < 30
+        ? 'The model predicts a shorter time-on-market estimate. Compare other scenarios before drawing conclusions.'
+        : days < 90
+          ? 'The model predicts a mid-range time-on-market estimate. Use Scenario Lab to compare changes.'
+          : 'The model predicts a longer time-on-market estimate. Check the inputs and compare scenarios.';
     }
 
     const disclaimer = document.getElementById('predictionDisclaimer');
-
     if (disclaimer) {
       disclaimer.textContent =
         'The model uses historical Beijing records and may be inaccurate for other locations, time periods, or properties unlike the training data.';
     }
 
     setMessage(
-      'Prediction updated successfully. Both price and days reflect the current inputs.',
+      'Prediction updated successfully. Both price and days use the current inputs.',
       'success'
     );
 
-    // Only manually submitted predictions scroll to the results.
     if (manual) {
       document.querySelector('.result-stack')?.scrollIntoView({
         behavior: 'smooth',
@@ -419,8 +395,10 @@ async function runPrediction(manual = false) {
   } catch (error) {
     if (requestId === predictionRequestId) {
       setMessage(`Prediction failed: ${error.message}`, 'error');
+      console.error('HomeVision prediction error:', error);
     }
   } finally {
+    // Only the newest request may change the button state.
     if (requestId === predictionRequestId && button) {
       button.disabled = false;
       button.innerHTML = 'Estimate price + time <span>→</span>';
@@ -430,7 +408,6 @@ async function runPrediction(manual = false) {
 
 function setMessage(message, type) {
   const element = document.getElementById('formMessage');
-
   if (element) {
     element.className = `form-message ${type || ''}`;
     element.textContent = message;
@@ -445,49 +422,41 @@ function decisionTitle(days) {
 
 async function init() {
   try {
-    const health = await get('/health');
-    apiOnline = health.status === 'ok';
+    await get('/health');
+    apiOnline = true;
 
-    document.getElementById('status').textContent =
-      apiOnline ? 'API connected' : 'API issue';
+    const status = document.getElementById('status');
+    if (status) status.textContent = 'API connected';
 
-    document.getElementById('statusDot').style.background =
-      apiOnline ? '#21c5a7' : '#ef4444';
+    const dot = document.getElementById('statusDot');
+    if (dot) dot.style.background = '#21c5a7';
 
     const sideBottom = document.querySelector('.side-bottom');
-
     if (sideBottom) {
-      sideBottom.querySelector('b').textContent =
-        apiOnline ? 'ML engine online' : 'ML engine offline';
-
-      sideBottom.querySelector('small').textContent =
-        apiOnline
-          ? 'Price + market-time models ready'
-          : 'Start backend and refresh';
+      sideBottom.querySelector('b').textContent = 'ML engine online';
+      sideBottom.querySelector('small').textContent = 'Price + market-time models ready';
     }
 
     defaults = await get('/defaults');
 
+    // Render the form only after the sample defaults are loaded.
     buildForm();
 
     const area = Number(defaults.square || 73.74);
     const renovation = Number(defaults.renovationCondition || 3);
     const floor = Number(defaults.floor_num || 11);
 
-    const aSquare = document.getElementById('a_square');
-    const aRenov = document.getElementById('a_renov');
-    const aFloor = document.getElementById('a_floor');
-    const bSquare = document.getElementById('b_square');
-    const bRenov = document.getElementById('b_renov');
-    const bFloor = document.getElementById('b_floor');
+    const setValue = (id, value) => {
+      const element = document.getElementById(id);
+      if (element) element.value = value;
+    };
 
-    if (aSquare) aSquare.value = area;
-    if (aRenov) aRenov.value = renovation;
-    if (aFloor) aFloor.value = floor;
-
-    if (bSquare) bSquare.value = area + 20;
-    if (bRenov) bRenov.value = renovation === 4 ? 3 : 4;
-    if (bFloor) bFloor.value = floor;
+    setValue('a_square', area);
+    setValue('a_renov', renovation);
+    setValue('a_floor', floor);
+    setValue('b_square', area + 20);
+    setValue('b_renov', renovation === 4 ? 3 : 4);
+    setValue('b_floor', floor);
 
     const [metrics, importance, summary] = await Promise.all([
       get('/metrics'),
@@ -513,21 +482,18 @@ async function init() {
     document.getElementById('formBadge').textContent =
       `${Object.keys(fields).length} INPUTS READY`;
 
-    // First prediction: use all sample defaults immediately.
-    if (apiOnline && document.getElementById('form')) {
-      runPrediction(false);
-    }
+    // Initial prediction using all sample defaults.
+    schedulePrediction(0);
   } catch (error) {
     apiOnline = false;
 
     const status = document.getElementById('status');
     if (status) status.textContent = 'API unavailable — start backend';
 
-    const statusDot = document.getElementById('statusDot');
-    if (statusDot) statusDot.style.background = '#ef4444';
+    const dot = document.getElementById('statusDot');
+    if (dot) dot.style.background = '#ef4444';
 
     const sideBottom = document.querySelector('.side-bottom');
-
     if (sideBottom) {
       sideBottom.querySelector('b').textContent = 'ML engine offline';
       sideBottom.querySelector('small').textContent = 'Run run_homevision.bat';
@@ -537,13 +503,12 @@ async function init() {
     if (badge) badge.textContent = 'API OFFLINE';
 
     const formFields = document.getElementById('formFields');
-
     if (formFields) {
       formFields.innerHTML =
         '<div class="empty-state"><h3>Connect HomeVision to load inputs</h3><p>Start the backend, then refresh this page.</p></div>';
     }
 
-    console.error('HomeVision API connection failed:', error);
+    console.error('HomeVision initialization failed:', error);
   }
 }
 
@@ -553,10 +518,10 @@ function renderMetrics(metrics) {
 
   const items = [
     ['PRICE · MAE', price.MAE, 'Average absolute error in 10,000 CNY units'],
-    ['PRICE · RMSE', price.RMSE, 'Root-mean-square error in 10,000 CNY units; larger misses weigh more'],
+    ['PRICE · RMSE', price.RMSE, 'Root-mean-square error in 10,000 CNY units'],
     ['PRICE · R²', price.R2, 'Fit score; closer to 1 is generally stronger'],
     ['DOM · MAE', dom.MAE, 'Average absolute error in days'],
-    ['DOM · RMSE', dom.RMSE, 'Root-mean-square error in days; larger misses weigh more'],
+    ['DOM · RMSE', dom.RMSE, 'Root-mean-square error in days'],
     ['DOM · R²', dom.R2, 'Fit score; closer to 1 is generally stronger']
   ];
 
@@ -584,9 +549,7 @@ function renderMetrics(metrics) {
 function renderImportance(importance) {
   for (const [id, key] of [['priceImp', 'price'], ['domImp', 'dom']]) {
     const array = importance[key] || [];
-    const max = Math.max(
-      ...array.map(item => Math.abs(item.importance))
-    ) || 1;
+    const max = Math.max(...array.map(item => Math.abs(item.importance))) || 1;
 
     document.getElementById(id).innerHTML =
       array.slice(0, 10).map(item => `<div class="bar">
@@ -621,32 +584,19 @@ async function runWhatIf() {
     [aRenov, bRenov].some(n => !Number.isInteger(n) || n < 1 || n > 4)
   ) {
     document.getElementById('scenarioOut').innerHTML =
-      '<p class="form-message error">Check your values: area 10–1000 m², floor 0–100, renovation code 1–4.</p>';
+      '<p class="form-message error">Check values: area 10–1000 m², floor 0–100, renovation code 1–4.</p>';
     return;
   }
 
   const common = { ...defaults };
 
-  const a = {
-    ...common,
-    square: aArea,
-    renovationCondition: aRenov,
-    floor_num: aFloor
-  };
-
-  const b = {
-    ...common,
-    square: bArea,
-    renovationCondition: bRenov,
-    floor_num: bFloor
-  };
+  const a = { ...common, square: aArea, renovationCondition: aRenov, floor_num: aFloor };
+  const b = { ...common, square: bArea, renovationCondition: bRenov, floor_num: bFloor };
 
   try {
     const response = await fetch(api + '/what-if', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         scenarios: [
           { name: 'Baseline', values: a },
@@ -656,10 +606,7 @@ async function runWhatIf() {
     });
 
     const result = await response.json();
-
-    if (!response.ok) {
-      throw new Error(result.detail || 'Scenario failed');
-    }
+    if (!response.ok) throw new Error(result.detail || 'Scenario failed');
 
     const scenarios = result.scenarios;
 
@@ -684,7 +631,7 @@ async function runWhatIf() {
         estimated market time</p>
         <p>${escapeHtml(result.insight)}</p>
       </div>
-      <p class="disclaimer">Only area, renovation code, and floor change in this quick comparison; all other features stay at sample defaults. These are model associations, not causal effects.</p>`;
+      <p class="disclaimer">Only area, renovation code, and floor change in this comparison; other features stay at sample defaults. These are model associations, not causal effects.</p>`;
   } catch (error) {
     document.getElementById('scenarioOut').innerHTML =
       `<p class="form-message error">Comparison failed: ${escapeHtml(error.message)}</p>`;
@@ -697,10 +644,9 @@ document.getElementById('runFactorAnalysis')
 document.getElementById('runWhatIfButton')
   ?.addEventListener('click', runWhatIf);
 
-init();
-
 async function loadFactorAnalysis() {
   const output = document.getElementById('factorOut');
+  if (!output) return;
 
   output.innerHTML =
     '<p>Calculating factors from a reproducible sample of the historical dataset…</p>';
@@ -745,7 +691,6 @@ async function loadFactorAnalysis() {
 
 async function loadPreprocessingReport() {
   const status = document.getElementById('preprocessStatus');
-
   if (!status || status.dataset.loaded === 'yes') return;
 
   status.innerHTML =
@@ -774,7 +719,7 @@ async function loadPreprocessingReport() {
     document.getElementById('preprocessTargets').innerHTML =
       `<div class="bar"><b>Price target</b><span>${report.price_usable_rows.toLocaleString()} records</span></div>
       <div class="bar"><b>DOM target</b><span>${report.dom_usable_rows.toLocaleString()} records</span></div>
-      <p class="disclaimer">The target counts differ because DOM can be missing even when price is valid.</p>
+      <p class="disclaimer">Target counts differ because DOM can be missing even when price is valid.</p>
       <p><b>Derived features:</b> ${report.engineered_features.map(escapeHtml).join(', ') || 'None detected'}</p>
       <p><b>Removed fields:</b> ${report.removed_columns.map(escapeHtml).join(', ') || 'None detected'}</p>`;
 
@@ -797,3 +742,5 @@ async function loadPreprocessingReport() {
       `<span class="scope-icon">!</span><div><strong>Could not load report</strong><p>${escapeHtml(error.message)}. Check that the API is running.</p></div>`;
   }
 }
+
+init();
